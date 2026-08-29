@@ -61,6 +61,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .page { padding: 16px; }
 .page-heading, .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.whatsapp-button { display: grid; width: 42px; min-height: 42px; flex: 0 0 auto; place-items: center; padding: 3px; border: 1px solid #b8dfc0; border-radius: 50%; background: #f3fbf5; }
+.whatsapp-button:hover:not(:disabled) { background: #e4f7e8; }
+.whatsapp-button img { display: block; width: 32px; height: 32px; }
 .page-heading { margin-bottom: 15px; }
 .page-heading h2, .section-heading h3 { margin: 0; color: #173b45; }
 .page-heading p { margin: 4px 0 0; color: #71868c; font-size: 14px; }
