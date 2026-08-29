@@ -19,6 +19,7 @@ import {
 } from './services/config';
 import { GoogleAuthService } from './services/googleAuth';
 import { SpreadsheetRepository } from './services/spreadsheetRepository';
+import logoUrl from './assets/logo-8208.png';
 
 type View = 'dashboard' | 'soldiers' | 'equipment' | 'history' | 'settings';
 type AppState = 'booting' | 'signed-out' | 'select-sheet' | 'loading' | 'result' | 'error';
@@ -84,6 +85,7 @@ export function App() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
+  const [signedInName, setSignedInName] = useState('');
   const [soldierForm, setSoldierForm] = useState<Soldier | 'new' | null>(null);
   const [equipmentForm, setEquipmentForm] = useState<Equipment | 'new' | null>(null);
   const [assignItem, setAssignItem] = useState<Equipment | 'choose' | null>(null);
@@ -103,6 +105,7 @@ export function App() {
         try {
           await auth.restoreSession();
           if (cancelled) return;
+          setSignedInName(auth.currentUserName());
           localStorage.setItem(GOOGLE_SIGNED_IN_STORAGE_KEY, 'true');
           if (spreadsheetId) await loadSpreadsheet(spreadsheetId, cancelled);
           else setAppState('select-sheet');
@@ -125,6 +128,7 @@ export function App() {
     try {
       setAppState('loading');
       await auth.signIn(localStorage.getItem(GOOGLE_LOGIN_HINT_STORAGE_KEY) || '');
+      setSignedInName(auth.currentUserName());
       localStorage.setItem(GOOGLE_SIGNED_IN_STORAGE_KEY, 'true');
       if (spreadsheetId) await loadSpreadsheet(spreadsheetId);
       else setAppState('select-sheet');
@@ -138,6 +142,7 @@ export function App() {
     auth.signOut();
     localStorage.removeItem(GOOGLE_SIGNED_IN_STORAGE_KEY);
     localStorage.removeItem(GOOGLE_LOGIN_HINT_STORAGE_KEY);
+    setSignedInName('');
     setResult(null);
     setAppState('signed-out');
   }
@@ -161,6 +166,7 @@ export function App() {
         localStorage.setItem(GOOGLE_LOGIN_HINT_STORAGE_KEY, loaded.data.meta.userEmail);
       }
       setResult(loaded);
+      setSignedInName(loaded.kind === 'ready' ? loaded.data.meta.userName || auth.currentUserName() : loaded.meta.userName || auth.currentUserName());
       setView('dashboard');
       setAppState('result');
     } catch (loadError) {
@@ -220,12 +226,12 @@ export function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand">
-          <div className="brand-mark" aria-hidden="true">צ</div>
+          <img className="brand-logo" src={logoUrl} alt="" aria-hidden="true" />
           <div><h1>צל״ם פלוגתי</h1><p>{data?.meta.title || 'ניהול ציוד לחימה'}</p></div>
         </div>
         {appState !== 'booting' && appState !== 'signed-out' && (
           <div className="top-actions">
-            <button className="ghost-button compact" onClick={openSheetPicker}>החלפת גיליון</button>
+            {signedInName && <span className="user-name" title="המשתמש המחובר">{signedInName}</span>}
             <button className="ghost-button compact" onClick={signOut}>יציאה</button>
           </div>
         )}

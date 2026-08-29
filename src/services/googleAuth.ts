@@ -76,6 +76,14 @@ export class GoogleAuthService {
     return this.accessToken;
   }
 
+  currentUserName(): string {
+    try {
+      return gapi.auth2.getAuthInstance().currentUser.get().getBasicProfile()?.getName() || '';
+    } catch {
+      return '';
+    }
+  }
+
   signOut(): void {
     const token = this.accessToken;
     this.accessToken = '';

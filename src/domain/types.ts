@@ -40,6 +40,7 @@ export interface SpreadsheetMeta {
   spreadsheetId: string;
   title: string;
   userEmail: string;
+  userName: string;
   isReadOnly: boolean;
   sheetIds: Record<string, number>;
 }

@@ -9,7 +9,7 @@ The product name shown in the UI is **צל״ם פלוגתי**.
 ## Reference implementation
 
 - Reuse the modern React/Vite application shell, visual language, colors, and interaction patterns from `/Users/meirrotstein/code/shavzak-beta/app`.
-- Use a Tzelem-specific text mark/title rather than the Shavzak logo.
+- Reuse the Shavzak logo asset alongside the Tzelem product title.
 - Keep this project standalone; do not modify `shavzak-beta` unless explicitly requested.
 - Preserve static-hosting compatibility (including GitHub Pages and a relative Vite base).
 
@@ -19,7 +19,8 @@ The product name shown in the UI is **צל״ם פלוגתי**.
 - Client-only Google integration; no application backend and no server-held Google credentials.
 - Use the legacy Google login method from Shavzak (`gapi.auth2`) as explicitly requested.
 - Access Google Sheets and Drive APIs from the signed-in browser session.
-- Accept the spreadsheet ID through `?spid=...`, persist it in local storage, and allow switching spreadsheets.
+- Accept the spreadsheet ID through `?spid=...` and persist it in local storage. Do not show a normal sheet-switch action in the authenticated header; choosing another sheet remains available as an error-recovery action.
+- Show the signed-in Google user's display name in the authenticated header.
 - Determine editability from Google Drive permissions: writers/owners may edit, while readers receive a read-only UI.
 - Keep spreadsheet access behind a typed repository/service layer. Normalize and validate sheet values before placing them in UI state.
 - Render spreadsheet-provided content as text; do not inject it as HTML.
@@ -189,4 +190,3 @@ Before considering a change complete:
 - Test assignment, return, transfer, status changes, archive/reactivation, and their history records.
 - Test mobile-width RTL layouts and loading, empty, error, and read-only states.
 - Keep unrelated user changes intact.
-

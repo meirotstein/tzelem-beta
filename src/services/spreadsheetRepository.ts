@@ -74,9 +74,9 @@ export class SpreadsheetRepository {
   constructor(private readonly spreadsheetId: string) {}
 
   async inspect(): Promise<LoadResult> {
-    const [spreadsheet, userEmail, editable] = await Promise.all([
+    const [spreadsheet, user, editable] = await Promise.all([
       this.getSpreadsheet(),
-      this.getUserEmail(),
+      this.getUserProfile(),
       this.getEditability(),
     ]);
     const sheets = spreadsheet.sheets || [];
@@ -88,7 +88,8 @@ export class SpreadsheetRepository {
     const meta: SpreadsheetMeta = {
       spreadsheetId: this.spreadsheetId,
       title: spreadsheet.properties?.title || this.spreadsheetId,
-      userEmail,
+      userEmail: user.email,
+      userName: user.name,
       isReadOnly: !editable,
       sheetIds,
     };
@@ -414,12 +415,13 @@ export class SpreadsheetRepository {
     return resultOf(response);
   }
 
-  private async getUserEmail(): Promise<string> {
+  private async getUserProfile(): Promise<{ email: string; name: string }> {
     try {
-      const response = await gapi.client.drive.about.get({ fields: 'user(emailAddress)' });
-      return resultOf(response)?.user?.emailAddress || '';
+      const response = await gapi.client.drive.about.get({ fields: 'user(emailAddress,displayName)' });
+      const user = resultOf(response)?.user;
+      return { email: user?.emailAddress || '', name: user?.displayName || '' };
     } catch {
-      return '';
+      return { email: '', name: '' };
     }
   }
 
