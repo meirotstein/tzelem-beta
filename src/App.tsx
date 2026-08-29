@@ -241,7 +241,7 @@ export function App() {
       {notice && <div className="banner success-banner" role="status">{notice}<button onClick={() => setNotice('')}>×</button></div>}
 
       {appState === 'booting' && <StatePanel title="טוען את צל״ם פלוגתי…" loading />}
-      {appState === 'loading' && <StatePanel title="טוען נתונים מ-Google Sheets…" loading />}
+      {appState === 'loading' && <StatePanel title="טוען נתונים..." loading />}
       {appState === 'signed-out' && (
         <StatePanel title="חיבור מאובטח ל-Google">
           <p>יש להתחבר עם חשבון בעל גישה לגיליון הפלוגתי.</p>
@@ -367,10 +367,18 @@ function EquipmentView({ data, onDetail, onAdd, readOnly }: { data: CompanyData;
   const [query, setQuery] = useState('');
   const [type, setType] = useState('');
   const [status, setStatus] = useState('');
+  const [platoon, setPlatoon] = useState('');
   const [showArchived, setShowArchived] = useState(false);
-  const filtered = data.equipment.filter((item) => (showArchived || item.active) && (!type || item.type === type) && (!status || item.status === status) && `${item.type} ${item.number} ${item.assignedTo} ${soldierName(data, item.assignedTo)}`.includes(query.trim()));
+  const filtered = data.equipment.filter((item) => {
+    const holder = data.soldiers.find((soldier) => soldier.personalNumber === item.assignedTo);
+    return (showArchived || item.active)
+      && (!type || item.type === type)
+      && (!status || item.status === status)
+      && (!platoon || holder?.platoon === platoon)
+      && `${item.type} ${item.number} ${item.assignedTo} ${soldierName(data, item.assignedTo)}`.includes(query.trim());
+  });
   return <div className="page"><div className="page-heading"><div><h2>מלאי צל״ם</h2><p>{filtered.length} פריטים</p></div><button className="primary-button compact" disabled={readOnly} onClick={onAdd}>הוספת צל״ם</button></div>
-    <div className="filters"><input placeholder="חיפוש לפי סוג, מספר צ או חייל" value={query} onChange={(e) => setQuery(e.target.value)} /><select value={type} onChange={(e) => setType(e.target.value)}><option value="">כל הסוגים</option>{data.settings.equipmentTypes.map((value) => <option key={value}>{value}</option>)}</select><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">כל הסטטוסים</option>{EQUIPMENT_STATUSES.map((value) => <option key={value}>{value}</option>)}</select><label className="check"><input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> כולל ארכיון</label></div>
+    <div className="filters"><input placeholder="חיפוש לפי סוג, מספר צ או חייל" value={query} onChange={(e) => setQuery(e.target.value)} /><select value={type} onChange={(e) => setType(e.target.value)}><option value="">כל הסוגים</option>{data.settings.equipmentTypes.map((value) => <option key={value}>{value}</option>)}</select><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">כל הסטטוסים</option>{EQUIPMENT_STATUSES.map((value) => <option key={value}>{value}</option>)}</select><select value={platoon} onChange={(e) => setPlatoon(e.target.value)}><option value="">כל המחלקות</option>{data.settings.platoons.map((value) => <option key={value}>{value}</option>)}</select><label className="check"><input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> כולל ארכיון</label></div>
     <div className="record-list">{filtered.map((item) => <button className={`record-card ${item.active ? '' : 'archived'}`} key={`${item.row}-${equipmentKey(item.type, item.number)}`} onClick={() => onDetail(item)}><div><strong>{item.type} <bdi>{item.number}</bdi></strong><span>{item.assignedTo ? `אצל ${soldierName(data, item.assignedTo)}` : 'ללא חייל משויך'}</span></div><div className="record-side"><span className={`status-pill ${statusClass(item.status)}`}>{item.status}</span><span aria-hidden="true">‹</span></div></button>)}</div>{!filtered.length && <EmptyList>לא נמצאו פריטי צל״ם התואמים לסינון.</EmptyList>}
   </div>;
 }
