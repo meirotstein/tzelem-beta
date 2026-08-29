@@ -60,6 +60,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .workspace { min-height: 520px; border: 1px solid #d5e1e4; border-radius: 16px; background: white; box-shadow: 0 10px 28px #133c4510; }
 .page { padding: 16px; }
 .page-heading, .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .page-heading { margin-bottom: 15px; }
 .page-heading h2, .section-heading h3 { margin: 0; color: #173b45; }
 .page-heading p { margin: 4px 0 0; color: #71868c; font-size: 14px; }
@@ -176,5 +177,6 @@ input::placeholder, textarea::placeholder { color: #8a9da2; }
   .filters { grid-template-columns: 1fr; }
   .filters > input:first-child { grid-column: auto; }
   .page-heading .compact { padding: 0 8px; font-size: 12px; }
+  .heading-actions { max-width: 190px; }
   .bottom-nav button { font-size: 10px; }
 }

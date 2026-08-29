@@ -140,12 +140,14 @@ Prominent actions:
 - List name, personal number, platoon, and a useful current-equipment summary.
 - Add, edit, archive, reactivate, search, and filter by platoon.
 - Soldier profile shows all current equipment and complete history.
+- Provide WhatsApp sharing for exactly the soldiers in the current filtered result. Group the message by platoon and list each soldier's currently assigned equipment.
 
 ### Equipment
 
 - List type, equipment number, status, and current holder.
 - Add, edit, archive, reactivate, assign, return, transfer, and change status.
 - Equipment profile shows its current holder and complete assignment/status history.
+- Provide WhatsApp sharing for exactly the equipment in the current filtered result. Group the message by equipment type and show each item's current holder and platoon when assigned.
 
 ### History
 
@@ -177,6 +179,7 @@ Filtering is combinable. Clear filters must be easy to discover on mobile.
 - Require confirmation for consequential actions such as return, transfer, archive, lost, and disabled.
 - Read-only mode must visibly explain why actions are unavailable, not merely hide all context.
 - Do not show stale success after a failed Sheets write. Provide a retry path where safe.
+- Encode the complete WhatsApp message with `encodeURIComponent` before opening the `whatsapp://send` URL.
 - Never expose raw API errors, OAuth tokens, API keys, or spreadsheet contents in production logs.
 
 ## Verification expectations
