@@ -84,6 +84,7 @@ Keep the schema definition centralized in code. Reads and writes must target hea
 - One soldier may hold multiple equipment items.
 - Moving assigned equipment to another soldier is a transfer, not a second assignment.
 - Soldiers and equipment are archived/reactivated, not permanently deleted.
+- User-facing actions use `הסרה`/`הסר` rather than the term `ארכוב`. In this app, removal means setting the record inactive while preserving its data and history for later reactivation.
 - Archived soldiers cannot receive equipment.
 - Archived equipment cannot be assigned.
 - Equipment with an active assignment cannot be archived until it is returned or transferred.

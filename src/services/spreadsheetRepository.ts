@@ -193,7 +193,7 @@ export class SpreadsheetRepository {
     await this.batch([
       updateRow(data.meta.sheetIds[SHEET_SCHEMA.soldiers.title], soldier.row, [soldier.name, soldier.personalNumber, soldier.platoon, active]),
       this.historyRequest(data, {
-        action: active ? 'הפעלת חייל' : 'ארכוב חייל',
+        action: active ? 'הפעלת חייל' : 'הסרת חייל',
         newSoldier: soldier.personalNumber,
         note: soldier.name,
       }),
@@ -234,7 +234,7 @@ export class SpreadsheetRepository {
     await this.batch([
       updateRow(data.meta.sheetIds[SHEET_SCHEMA.equipment.title], item.row, [item.type, item.number, item.status, item.assignedTo, item.note, active]),
       this.historyRequest(data, {
-        action: active ? 'הפעלת צל״ם' : 'ארכוב צל״ם',
+        action: active ? 'הפעלת צל״ם' : 'הסרת צל״ם',
         type: item.type,
         number: item.number,
         previousSoldier: item.assignedTo,

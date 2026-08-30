@@ -26,7 +26,7 @@ function soldierFilterSummary(filters: SoldierShareFilters): string {
   if (filters.platoon) parts.push(`מחלקה ${filters.platoon}`);
   if (filters.equipmentState === 'assigned') parts.push('עם צל״ם');
   if (filters.equipmentState === 'none') parts.push('ללא צל״ם');
-  if (filters.showArchived) parts.push('כולל ארכיון');
+  if (filters.showArchived) parts.push('כולל שהוסרו');
   return filterSummary(parts);
 }
 
@@ -36,7 +36,7 @@ function equipmentFilterSummary(filters: EquipmentShareFilters): string {
   if (filters.type) parts.push(`סוג: ${filters.type}`);
   if (filters.status) parts.push(`סטטוס: ${filters.status}`);
   if (filters.platoon) parts.push(`מחלקה ${filters.platoon}`);
-  if (filters.showArchived) parts.push('כולל ארכיון');
+  if (filters.showArchived) parts.push('כולל שהוסרו');
   return filterSummary(parts);
 }
 
@@ -55,7 +55,7 @@ export function buildSoldiersWhatsAppMessage(
   for (const platoon of platoons) {
     lines.push(`*[מחלקה ${platoon}]*`, '');
     for (const soldier of soldiers.filter((candidate) => candidate.platoon === platoon)) {
-      lines.push(`*${soldier.name}*${soldier.active ? '' : ' [בארכיון]'}`);
+      lines.push(`*${soldier.name}*${soldier.active ? '' : ' [הוסר]'}`);
       const items = equipmentForSoldier(data, soldier.personalNumber);
       if (items.length) {
         items.forEach((item) => lines.push(`• ${item.type} — ${item.number}`));
@@ -85,7 +85,7 @@ export function buildEquipmentWhatsAppMessage(
     for (const item of equipment.filter((candidate) => candidate.type === type)) {
       const holder = data.soldiers.find((soldier) => soldier.personalNumber === item.assignedTo);
       const assignment = holder ? `${holder.name} (מחלקה ${holder.platoon})` : 'לא משויך';
-      lines.push(`• ${item.number} — ${assignment} · ${item.status}${item.active ? '' : ' · בארכיון'}`);
+      lines.push(`• ${item.number} — ${assignment} · ${item.status}${item.active ? '' : ' · הוסר'}`);
     }
     lines.push('');
   }
