@@ -179,6 +179,7 @@ Filtering is combinable. Clear filters must be easy to discover on mobile.
 - Require confirmation for consequential actions such as return, transfer, archive, lost, and disabled.
 - Read-only mode must visibly explain why actions are unavailable, not merely hide all context.
 - Do not show stale success after a failed Sheets write. Provide a retry path where safe.
+- Render WhatsApp sharing actions as icon-only buttons using the shared Shavzak WhatsApp asset, with an accessible Hebrew `aria-label` and tooltip; do not use a text share button.
 - Encode the complete WhatsApp message with `encodeURIComponent` before opening the `whatsapp://send` URL.
 - Never expose raw API errors, OAuth tokens, API keys, or spreadsheet contents in production logs.
 
