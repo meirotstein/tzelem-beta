@@ -1,142 +1,258 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
-import { canArchiveEquipment, canArchiveSoldier, equipmentForSoldier, soldiersWithoutEquipment } from './domain/rules';
-import { equipmentKey } from './domain/schema';
-import { buildEquipmentWhatsAppMessage, buildSoldiersWhatsAppMessage, shareOnWhatsApp } from './domain/sharing';
 import {
+  FormEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  availableQuantity,
+  canRemoveCatalogItem,
+  canRemoveNumberedItem,
+  canRemoveSoldier,
+  fuzzyScore,
+  holdingsForSoldier,
+  issuedQuantity,
+  numberedItemsForSoldier,
+  soldierHasEquipment,
+  soldiersWithoutEquipment,
+} from "./domain/rules";
+import { catalogKey, itemLabel, numberedItemKey } from "./domain/schema";
+import {
+  isValidSignature,
+  MAX_SIGNATURE_POINTS,
+} from "./domain/signature";
+import {
+  buildInventoryWhatsAppMessage,
+  buildSoldierMovementsWhatsAppMessage,
+  buildSoldiersWhatsAppMessage,
+  shareOnWhatsApp,
+} from "./domain/sharing";
+import type {
+  CatalogInput,
+  CatalogItem,
   CompanyData,
-  EQUIPMENT_STATUSES,
-  Equipment,
-  EquipmentInput,
   EquipmentStatus,
-  HistoryEntry,
   LoadResult,
+  MovementEntry,
+  NumberedItem,
+  SignatureData,
+  SignaturePoint,
+  SignatureRecord,
+  SignatureSummary,
+  SigningSessionInput,
   Soldier,
   SoldierInput,
-} from './domain/types';
+} from "./domain/types";
+import { EQUIPMENT_STATUSES, MANAGEMENT_METHODS } from "./domain/types";
 import {
   GOOGLE_LOGIN_HINT_STORAGE_KEY,
   GOOGLE_SIGNED_IN_STORAGE_KEY,
   SPREADSHEET_STORAGE_KEY,
-} from './services/config';
-import { GoogleAuthService } from './services/googleAuth';
-import { SpreadsheetRepository } from './services/spreadsheetRepository';
-import logoUrl from './assets/logo-8208.png';
-import whatsappIconUrl from './assets/whatsapp.svg';
+} from "./services/config";
+import { GoogleAuthService } from "./services/googleAuth";
+import { SpreadsheetRepository } from "./services/spreadsheetRepository";
+import logoUrl from "./assets/logo-8208.png";
+import whatsappIconUrl from "./assets/whatsapp.svg";
 
-type View = 'dashboard' | 'soldiers' | 'equipment' | 'history' | 'settings';
-type AppState = 'booting' | 'signed-out' | 'select-sheet' | 'loading' | 'result' | 'error';
+type View =
+  "dashboard" | "signings" | "soldiers" | "inventory" | "history" | "settings";
+type AppState =
+  "booting" | "signed-out" | "select-sheet" | "loading" | "result" | "error";
+type Action =
+  | {
+      kind: "numbered";
+      item: NumberedItem;
+      mode: "assign" | "return" | "status";
+    }
+  | {
+      kind: "quantity";
+      item: CatalogItem;
+      mode: "issue" | "return" | "transfer";
+      soldier?: Soldier;
+    }
+  | { kind: "stock"; item: CatalogItem }
+  | null;
+type SignatureViewerState = {
+  key: string;
+  summary: SignatureSummary;
+  record: SignatureRecord | null;
+  loading: boolean;
+  error: string;
+};
 
 const auth = new GoogleAuthService();
-
-function idFromValue(value: string): string {
-  const trimmed = value.trim();
-  const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
-  return match?.[1] || trimmed;
-}
-
-function initialSpreadsheetId(): string {
-  const url = new URL(window.location.href);
-  return idFromValue(url.searchParams.get('spid') || localStorage.getItem(SPREADSHEET_STORAGE_KEY) || '');
-}
-
-function displayDate(value: string): string {
+const idFromValue = (value: string) =>
+  value.trim().match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/)?.[1] ||
+  value.trim();
+const initialSpreadsheetId = () =>
+  idFromValue(
+    new URL(window.location.href).searchParams.get("spid") ||
+      localStorage.getItem(SPREADSHEET_STORAGE_KEY) ||
+      "",
+  );
+const displayDate = (value: string) => {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat('he-IL', { dateStyle: 'short', timeStyle: 'short' }).format(date);
-}
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat("he-IL", {
+        dateStyle: "short",
+        timeStyle: "short",
+      }).format(date);
+};
+const statusClass = (status: EquipmentStatus) =>
+  status === "זמין"
+    ? "success"
+    : status === "משויך"
+      ? "info"
+      : ["אבוד", "מושבת"].includes(status)
+        ? "danger"
+        : "warning";
+const signatureForMovement = (
+  entry: MovementEntry,
+  signatures: SignatureSummary[],
+) =>
+  signatures.find(
+    (signature) =>
+      signature.timestamp === entry.timestamp &&
+      (signature.personalNumber === entry.previousSoldier ||
+        signature.personalNumber === entry.newSoldier),
+  );
 
-function soldierName(data: CompanyData, personalNumber: string): string {
-  return data.soldiers.find((soldier) => soldier.personalNumber === personalNumber)?.name || personalNumber || '—';
-}
-
-function statusClass(status: EquipmentStatus): string {
-  if (status === 'זמין') return 'success';
-  if (status === 'משויך') return 'info';
-  if (status === 'אבוד' || status === 'מושבת') return 'danger';
-  return 'warning';
-}
-
-function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+function Modal({
+  title,
+  children,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal" role="dialog" aria-modal="true" aria-label={title}>
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <section
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
         <div className="modal-header">
           <h2>{title}</h2>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="סגירה">×</button>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={onClose}
+            aria-label="סגירה"
+          >
+            ×
+          </button>
         </div>
         {children}
       </section>
     </div>
   );
 }
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="field"><span>{label}</span>{children}</label>;
-}
-
-function EmptyList({ children }: { children: ReactNode }) {
-  return <div className="empty-list">{children}</div>;
-}
+const Field = ({ label, children }: { label: string; children: ReactNode }) => (
+  <label className="field">
+    <span>{label}</span>
+    {children}
+  </label>
+);
+const EmptyList = ({ children }: { children: ReactNode }) => (
+  <div className="empty-list">{children}</div>
+);
 
 export function App() {
-  const [appState, setAppState] = useState<AppState>('booting');
+  const [appState, setAppState] = useState<AppState>("booting");
   const [spreadsheetId, setSpreadsheetId] = useState(initialSpreadsheetId);
   const [sheetInput, setSheetInput] = useState(initialSpreadsheetId);
   const [result, setResult] = useState<LoadResult | null>(null);
-  const [view, setView] = useState<View>('dashboard');
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [view, setView] = useState<View>("dashboard");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
-  const [signedInName, setSignedInName] = useState('');
-  const [soldierForm, setSoldierForm] = useState<Soldier | 'new' | null>(null);
-  const [equipmentForm, setEquipmentForm] = useState<Equipment | 'new' | null>(null);
-  const [assignItem, setAssignItem] = useState<Equipment | 'choose' | null>(null);
-  const [returnItem, setReturnItem] = useState<Equipment | null>(null);
-  const [statusItem, setStatusItem] = useState<Equipment | null>(null);
+  const [signedInName, setSignedInName] = useState("");
+  const [soldierForm, setSoldierForm] = useState<Soldier | "new" | null>(null);
+  const [catalogForm, setCatalogForm] = useState<CatalogItem | "new" | null>(
+    null,
+  );
+  const [numberedForm, setNumberedForm] = useState<NumberedItem | "new" | null>(
+    null,
+  );
+  const [action, setAction] = useState<Action>(null);
   const [soldierDetail, setSoldierDetail] = useState<Soldier | null>(null);
-  const [equipmentDetail, setEquipmentDetail] = useState<Equipment | null>(null);
+  const [catalogDetail, setCatalogDetail] = useState<CatalogItem | null>(null);
+  const [movementShareSoldier, setMovementShareSoldier] =
+    useState<Soldier | null>(null);
+  const [signingReceipt, setSigningReceipt] = useState<{
+    soldier: Soldier;
+    movements: MovementEntry[];
+  } | null>(null);
+  const [signatureViewer, setSignatureViewer] =
+    useState<SignatureViewerState | null>(null);
+  const signatureCache = useRef(new Map<string, SignatureRecord>());
 
-  const data = result?.kind === 'ready' ? result.data : null;
-  const repo = useMemo(() => (spreadsheetId ? new SpreadsheetRepository(spreadsheetId) : null), [spreadsheetId]);
+  const data = result?.kind === "ready" ? result.data : null;
+  const repo = useMemo(
+    () => (spreadsheetId ? new SpreadsheetRepository(spreadsheetId) : null),
+    [spreadsheetId],
+  );
 
   useEffect(() => {
     let cancelled = false;
-    auth.init().then(async () => {
-      if (cancelled) return;
-      if (auth.isSignedIn() || localStorage.getItem(GOOGLE_SIGNED_IN_STORAGE_KEY) === 'true') {
-        try {
-          await auth.restoreSession();
-          if (cancelled) return;
-          setSignedInName(auth.currentUserName());
-          localStorage.setItem(GOOGLE_SIGNED_IN_STORAGE_KEY, 'true');
-          if (spreadsheetId) await loadSpreadsheet(spreadsheetId, cancelled);
-          else setAppState('select-sheet');
-          return;
-        } catch {
-          localStorage.removeItem(GOOGLE_SIGNED_IN_STORAGE_KEY);
+    auth
+      .init()
+      .then(async () => {
+        if (cancelled) return;
+        if (
+          auth.isSignedIn() ||
+          localStorage.getItem(GOOGLE_SIGNED_IN_STORAGE_KEY) === "true"
+        ) {
+          try {
+            await auth.restoreSession();
+            if (cancelled) return;
+            setSignedInName(auth.currentUserName());
+            localStorage.setItem(GOOGLE_SIGNED_IN_STORAGE_KEY, "true");
+            if (spreadsheetId) await loadSpreadsheet(spreadsheetId, cancelled);
+            else setAppState("select-sheet");
+            return;
+          } catch {
+            localStorage.removeItem(GOOGLE_SIGNED_IN_STORAGE_KEY);
+          }
         }
-      }
-      if (!cancelled) setAppState('signed-out');
-    }).catch(() => {
-      if (!cancelled) {
-        setError('לא ניתן לטעון את שירות ההתחברות של Google');
-        setAppState('error');
-      }
-    });
-    return () => { cancelled = true; };
+        if (!cancelled) setAppState("signed-out");
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("לא ניתן לטעון את שירות ההתחברות של Google");
+          setAppState("error");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function signIn() {
     try {
-      setAppState('loading');
-      await auth.signIn(localStorage.getItem(GOOGLE_LOGIN_HINT_STORAGE_KEY) || '');
+      setAppState("loading");
+      await auth.signIn(
+        localStorage.getItem(GOOGLE_LOGIN_HINT_STORAGE_KEY) || "",
+      );
       setSignedInName(auth.currentUserName());
-      localStorage.setItem(GOOGLE_SIGNED_IN_STORAGE_KEY, 'true');
+      localStorage.setItem(GOOGLE_SIGNED_IN_STORAGE_KEY, "true");
       if (spreadsheetId) await loadSpreadsheet(spreadsheetId);
-      else setAppState('select-sheet');
+      else setAppState("select-sheet");
     } catch {
-      setError('ההתחברות ל-Google נכשלה');
-      setAppState('signed-out');
+      setError("ההתחברות ל-Google נכשלה");
+      setAppState("signed-out");
     }
   }
 
@@ -144,349 +260,3201 @@ export function App() {
     auth.signOut();
     localStorage.removeItem(GOOGLE_SIGNED_IN_STORAGE_KEY);
     localStorage.removeItem(GOOGLE_LOGIN_HINT_STORAGE_KEY);
-    setSignedInName('');
+    setSignedInName("");
     setResult(null);
-    setAppState('signed-out');
+    setAppState("signed-out");
   }
 
-  async function loadSpreadsheet(idValue: string, cancelled = false) {
-    const id = idFromValue(idValue);
+  async function loadSpreadsheet(value: string, cancelled = false) {
+    const id = idFromValue(value);
     if (!id) {
-      setError('יש להזין מזהה או קישור לגיליון');
-      setAppState('select-sheet');
+      setError("יש להזין מזהה או קישור לגיליון");
+      setAppState("select-sheet");
       return;
     }
     try {
-      setAppState('loading');
-      setError('');
+      setAppState("loading");
+      setError("");
       const loaded = await new SpreadsheetRepository(id).inspect();
       if (cancelled) return;
       setSpreadsheetId(id);
       setSheetInput(id);
       localStorage.setItem(SPREADSHEET_STORAGE_KEY, id);
-      if (loaded.kind === 'ready' && loaded.data.meta.userEmail) {
-        localStorage.setItem(GOOGLE_LOGIN_HINT_STORAGE_KEY, loaded.data.meta.userEmail);
-      }
+      const meta = loaded.kind === "ready" ? loaded.data.meta : loaded.meta;
+      if (meta.userEmail)
+        localStorage.setItem(GOOGLE_LOGIN_HINT_STORAGE_KEY, meta.userEmail);
+      setSignedInName(meta.userName || auth.currentUserName());
       setResult(loaded);
-      setSignedInName(loaded.kind === 'ready' ? loaded.data.meta.userName || auth.currentUserName() : loaded.meta.userName || auth.currentUserName());
-      setView('dashboard');
-      setAppState('result');
-    } catch (loadError) {
-      if (cancelled) return;
-      setError(loadError instanceof Error && loadError.message.startsWith('סטטוס') || loadError instanceof Error && loadError.message.includes('שורה') || loadError instanceof Error && loadError.message.includes('כפול')
-        ? loadError.message
-        : 'אין גישה לגיליון או שלא ניתן לקרוא אותו');
-      setAppState('error');
+      setView("dashboard");
+      setAppState("result");
+    } catch {
+      if (!cancelled) {
+        setError("אין גישה לגיליון או שלא ניתן לקרוא אותו");
+        setAppState("error");
+      }
     }
   }
 
   async function initializeSheet() {
-    if (!repo || result?.kind !== 'empty') return;
-    if (!window.confirm('להכין את הגיליון הריק לצל״ם פלוגתי? הפעולה תיצור את הלשוניות והכותרות הנדרשות.')) return;
+    if (!repo || result?.kind !== "empty") return;
+    if (
+      !window.confirm(
+        "להכין את הגיליון הריק לציוד פלוגתי? הפעולה תיצור את הלשוניות והכותרות הנדרשות.",
+      )
+    )
+      return;
     try {
       setSaving(true);
       await repo.initializeEmptyWorkbook(result.meta);
       await loadSpreadsheet(spreadsheetId);
-      setNotice('הגיליון הוכן בהצלחה');
-    } catch {
-      setError('הכנת הגיליון נכשלה. לא כל השינויים נשמרו.');
+      setNotice("הגיליון הוכן בהצלחה");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "הכנת הגיליון נכשלה");
     } finally {
       setSaving(false);
     }
   }
 
-  async function mutate(operation: (current: CompanyData, repository: SpreadsheetRepository) => Promise<void>, success: string): Promise<boolean> {
-    if (!data || !repo || data.meta.isReadOnly || saving) return false;
+  async function upgradeSheetStructure() {
+    if (!repo || result?.kind !== "upgradeable") return;
+    if (
+      !window.confirm(
+        "להוסיף לגיליון את הלשוניות והעמודות החסרות? נתונים קיימים לא יימחקו או יועברו.",
+      )
+    )
+      return;
     try {
       setSaving(true);
-      setError('');
-      setNotice('');
-      await operation(data, repo);
+      setError("");
+      await repo.applyAdditiveSchemaUpgrade(result.meta);
       await loadSpreadsheet(spreadsheetId);
+      setNotice("מבנה הגיליון עודכן בהצלחה");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "עדכון המבנה נכשל");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function mutate(
+    operation: (
+      current: CompanyData,
+      repository: SpreadsheetRepository,
+    ) => Promise<void>,
+    success: string,
+  ) {
+    if (!data || !repo || !data.meta.editable || saving) return false;
+    try {
+      setSaving(true);
+      setError("");
+      setNotice("");
+      const fresh = await repo.inspect();
+      if (fresh.kind !== "ready") {
+        throw new Error("מבנה הגיליון השתנה. יש לטעון אותו מחדש.");
+      }
+      await operation(fresh.data, repo);
+      const refreshed = await repo.inspect();
+      if (refreshed.kind !== "ready") {
+        throw new Error("השמירה בוצעה, אך קריאת הנתונים המעודכנים נכשלה.");
+      }
+      setResult(refreshed);
       setNotice(success);
       return true;
-    } catch (mutationError) {
-      setError(mutationError instanceof Error ? mutationError.message : 'השמירה נכשלה');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "השמירה נכשלה");
       return false;
     } finally {
       setSaving(false);
     }
   }
 
-  function switchSheet(event: FormEvent) {
-    event.preventDefault();
-    void loadSpreadsheet(sheetInput);
+  async function openSignature(summary: SignatureSummary) {
+    if (!repo) return;
+    const key = `${spreadsheetId}:${summary.row}:${summary.timestamp}:${summary.personalNumber}`;
+    const cached = signatureCache.current.get(key);
+    if (cached) {
+      setSignatureViewer({
+        key,
+        summary,
+        record: cached,
+        loading: false,
+        error: "",
+      });
+      return;
+    }
+    setSignatureViewer({ key, summary, record: null, loading: true, error: "" });
+    try {
+      const record = await repo.loadSignatureRecord(summary);
+      signatureCache.current.set(key, record);
+      setSignatureViewer((current) =>
+        current?.key === key
+          ? { ...current, record, loading: false, error: "" }
+          : current,
+      );
+    } catch (cause) {
+      setSignatureViewer((current) =>
+        current?.key === key
+          ? {
+              ...current,
+              loading: false,
+              error:
+                cause instanceof Error
+                  ? cause.message
+                  : "טעינת החתימה נכשלה",
+            }
+          : current,
+      );
+    }
   }
 
-  function openSheetPicker() {
-    setResult(null);
-    setError('');
-    setAppState('select-sheet');
-  }
+  if (appState === "booting" || appState === "loading")
+    return <Splash text="טוען…" />;
+  if (appState === "signed-out")
+    return <Welcome error={error} onSignIn={() => void signIn()} />;
+  if (appState === "select-sheet")
+    return (
+      <SheetPicker
+        value={sheetInput}
+        setValue={setSheetInput}
+        error={error}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void loadSpreadsheet(sheetInput);
+        }}
+        onSignOut={signOut}
+      />
+    );
+  if (appState === "error")
+    return (
+      <ShellHeader name={signedInName} onSignOut={signOut}>
+        <main className="center-card">
+          <h2>לא ניתן לפתוח את הגיליון</h2>
+          <p>{error}</p>
+          <button
+            className="primary-button"
+            onClick={() => setAppState("select-sheet")}
+          >
+            בחירת גיליון
+          </button>
+        </main>
+      </ShellHeader>
+    );
+  if (!result) return null;
+  if (result.kind === "empty")
+    return (
+      <ShellHeader name={signedInName} onSignOut={signOut}>
+        <main className="center-card">
+          <h2>הגיליון ריק</h2>
+          <p>ניתן להכין אותו כמערכת ציוד פלוגתי חדשה.</p>
+          {result.meta.editable ? (
+            <button
+              className="primary-button"
+              disabled={saving}
+              onClick={() => void initializeSheet()}
+            >
+              הכנת הגיליון לציוד פלוגתי
+            </button>
+          ) : (
+            <p className="read-only-banner">
+              נדרשת הרשאת עריכה כדי להכין את הגיליון.
+            </p>
+          )}
+          <button
+            className="text-button"
+            onClick={() => setAppState("select-sheet")}
+          >
+            בחירת גיליון אחר
+          </button>
+        </main>
+      </ShellHeader>
+    );
+  if (result.kind === "upgradeable")
+    return (
+      <ShellHeader name={signedInName} onSignOut={signOut}>
+        <main className="center-card">
+          <h2>נדרש עדכון קטן במבנה הגיליון</h2>
+          <p>
+            ניתן להשלים את המבנה על ידי הוספת לשוניות או עמודות בלבד. נתונים
+            קיימים לא יימחקו או יועברו.
+          </p>
+          {error && (
+            <div className="alert error" role="alert">
+              {error}
+            </div>
+          )}
+          <ul>
+            {result.issues.map((issue) => (
+              <li key={issue}>{issue}</li>
+            ))}
+          </ul>
+          {result.meta.editable ? (
+            <button
+              className="primary-button"
+              disabled={saving}
+              onClick={() => void upgradeSheetStructure()}
+            >
+              {saving ? "מעדכן…" : "השלמת מבנה הגיליון"}
+            </button>
+          ) : (
+            <p className="read-only-banner">
+              נדרשת הרשאת עריכה כדי להשלים את מבנה הגיליון.
+            </p>
+          )}
+          <button
+            className="text-button"
+            onClick={() => setAppState("select-sheet")}
+          >
+            בחירת גיליון אחר
+          </button>
+        </main>
+      </ShellHeader>
+    );
+  if (result.kind === "incompatible")
+    return (
+      <ShellHeader name={signedInName} onSignOut={signOut}>
+        <main className="center-card">
+          <h2>מבנה הגיליון אינו תואם לציוד פלוגתי</h2>
+          <p>לא בוצעו שינויים.</p>
+          <ul>
+            {result.issues.map((issue) => (
+              <li key={issue}>{issue}</li>
+            ))}
+          </ul>
+          <button
+            className="text-button"
+            onClick={() => setAppState("select-sheet")}
+          >
+            בחירת גיליון אחר
+          </button>
+        </main>
+      </ShellHeader>
+    );
+  if (!data) return null;
 
   return (
-    <main className="app-shell">
+    <div className="app-shell" dir="rtl">
       <header className="topbar">
         <div className="brand">
-          <img className="brand-logo" src={logoUrl} alt="" aria-hidden="true" />
-          <div><h1>צל״ם פלוגתי</h1><p>{data?.meta.title || 'ניהול ציוד לחימה'}</p></div>
-        </div>
-        {appState !== 'booting' && appState !== 'signed-out' && (
-          <div className="top-actions">
-            {signedInName && <span className="user-name" title="המשתמש המחובר">{signedInName}</span>}
-            <button className="ghost-button compact" onClick={signOut}>יציאה</button>
+          <img src={logoUrl} alt="" />
+          <div>
+            <strong>ציוד פלוגתי</strong>
+            <small>{data.meta.title}</small>
           </div>
-        )}
-      </header>
-
-      {error && <div className="banner error-banner" role="alert">{error}<button onClick={() => setError('')}>×</button></div>}
-      {notice && <div className="banner success-banner" role="status">{notice}<button onClick={() => setNotice('')}>×</button></div>}
-
-      {appState === 'booting' && <StatePanel title="טוען את צל״ם פלוגתי…" loading />}
-      {appState === 'loading' && <StatePanel title="טוען נתונים..." loading />}
-      {appState === 'signed-out' && (
-        <StatePanel title="חיבור מאובטח ל-Google">
-          <p>יש להתחבר עם חשבון בעל גישה לגיליון הפלוגתי.</p>
-          <button className="primary-button" onClick={signIn}>התחברות באמצעות Google</button>
-        </StatePanel>
-      )}
-      {appState === 'select-sheet' && (
-        <StatePanel title="בחירת גיליון">
-          <form className="stack-form" onSubmit={switchSheet}>
-            <Field label="מזהה או קישור ל-Google Sheets">
-              <input dir="ltr" value={sheetInput} onChange={(event) => setSheetInput(event.target.value)} autoFocus />
-            </Field>
-            <button className="primary-button" type="submit">פתיחת הגיליון</button>
-          </form>
-        </StatePanel>
-      )}
-      {appState === 'error' && (
-        <StatePanel title="לא ניתן לפתוח את הגיליון">
-          <p>{error || 'אירעה שגיאה לא צפויה'}</p>
-          <button className="primary-button" onClick={openSheetPicker}>בחירת גיליון אחר</button>
-        </StatePanel>
-      )}
-      {appState === 'result' && result?.kind === 'empty' && (
-        <StatePanel title="הגיליון ריק">
-          <p>ניתן להכין אותו לשימוש בצל״ם פלוגתי באמצעות יצירת ארבע הלשוניות הנדרשות.</p>
-          {result.meta.isReadOnly ? (
-            <p className="read-only-note">נדרשת הרשאת עריכה כדי להכין את הגיליון.</p>
-          ) : (
-            <button className="primary-button" disabled={saving} onClick={initializeSheet}>הכנת הגיליון לצל״ם פלוגתי</button>
+        </div>
+        <div className="user-area">
+          {saving && (
+            <span className="save-indicator" role="status">
+              שומר…
+            </span>
           )}
-        </StatePanel>
+          <span>{signedInName || data.meta.userName}</span>
+          <button className="text-button" onClick={signOut}>
+            יציאה
+          </button>
+        </div>
+      </header>
+      {!data.meta.editable && (
+        <div className="read-only-banner">
+          הגיליון פתוח לקריאה בלבד. פעולות עריכה אינן זמינות.
+        </div>
       )}
-      {appState === 'result' && result?.kind === 'incompatible' && (
-        <StatePanel title="מבנה הגיליון אינו תואם לצל״ם פלוגתי">
-          <p>לא בוצעו שינויים בגיליון.</p>
-          <ul className="issues-list">{result.issues.map((issue, index) => <li key={`${issue.tab}-${index}`}>{issue.message}</li>)}</ul>
-          <button className="ghost-button" onClick={() => loadSpreadsheet(spreadsheetId)}>בדיקה מחדש</button>
-        </StatePanel>
+      {(error || notice) && (
+        <div className={error ? "alert error" : "alert success"}>
+          {error || notice}
+          <button
+            onClick={() => {
+              setError("");
+              setNotice("");
+            }}
+            aria-label="סגירה"
+          >
+            ×
+          </button>
+        </div>
       )}
-      {appState === 'result' && data && (
-        <>
-          {data.meta.isReadOnly && <div className="read-only-banner">מצב צפייה בלבד — לחשבון הנוכחי אין הרשאת עריכה בגיליון.</div>}
-          <section className="workspace">
-            {view === 'dashboard' && <Dashboard data={data} onAddSoldier={() => setSoldierForm('new')} onAddEquipment={() => setEquipmentForm('new')} onAssign={() => setAssignItem('choose')} readOnly={data.meta.isReadOnly} />}
-            {view === 'soldiers' && <SoldiersView data={data} onDetail={setSoldierDetail} onAdd={() => setSoldierForm('new')} readOnly={data.meta.isReadOnly} />}
-            {view === 'equipment' && <EquipmentView data={data} onDetail={setEquipmentDetail} onAdd={() => setEquipmentForm('new')} readOnly={data.meta.isReadOnly} />}
-            {view === 'history' && <HistoryView data={data} />}
-            {view === 'settings' && <SettingsView data={data} saving={saving} onSave={(settings, action, note) => mutate((current, repository) => repository.saveSettings(current, settings, action, note), 'ההגדרות נשמרו')} />}
-          </section>
-          <nav className="bottom-nav" aria-label="ניווט ראשי">
-            {([
-              ['dashboard', '⌂', 'ראשי'],
-              ['soldiers', '♟', 'חיילים'],
-              ['equipment', '▣', 'צל״ם'],
-              ['history', '↶', 'היסטוריה'],
-              ['settings', '⚙', 'הגדרות'],
-            ] as [View, string, string][]).map(([key, icon, label]) => (
-              <button key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}><span>{icon}</span>{label}</button>
-            ))}
-          </nav>
-        </>
-      )}
+      <main className="content">
+        {view === "dashboard" && (
+          <Dashboard
+            data={data}
+            editable={data.meta.editable}
+            onView={setView}
+            onAddSoldier={() => setSoldierForm("new")}
+            onAddNumbered={() => setNumberedForm("new")}
+            onIssue={() => setView("signings")}
+          />
+        )}
+        {view === "soldiers" && (
+          <SoldiersView
+            data={data}
+            editable={data.meta.editable}
+            onAdd={() => setSoldierForm("new")}
+            onEdit={setSoldierForm}
+            onOpen={setSoldierDetail}
+            onToggle={(soldier) => {
+              const issue = soldier.active
+                ? canRemoveSoldier(soldier, data.numberedItems, data.holdings)
+                : null;
+              if (issue) return setError(issue);
+              if (
+                window.confirm(
+                  soldier.active ? "להסיר את החייל?" : "להפעיל מחדש את החייל?",
+                )
+              )
+                void mutate(
+                  (current, repository) =>
+                    repository.setSoldierActive(
+                      current,
+                      soldier,
+                      !soldier.active,
+                    ),
+                  soldier.active ? "החייל הוסר" : "החייל הופעל",
+                );
+            }}
+          />
+        )}
+        {view === "signings" && (
+          <SigningsView
+            data={data}
+            editable={data.meta.editable}
+            saving={saving}
+            onSave={async (soldier, input) => {
+              let movements: MovementEntry[] = [];
+              const ok = await mutate(async (current, repository) => {
+                movements = await repository.saveSigningSession(
+                  current,
+                  soldier,
+                  input,
+                );
+              }, "ההחתמה נשמרה");
+              if (ok) setSigningReceipt({ soldier, movements });
+              return ok;
+            }}
+          />
+        )}
+        {view === "inventory" && (
+          <InventoryView
+            data={data}
+            editable={data.meta.editable}
+            onAddCatalog={() => setCatalogForm("new")}
+            onAddNumbered={() => setNumberedForm("new")}
+            onCatalog={setCatalogDetail}
+            onCatalogEdit={setCatalogForm}
+            onNumberedEdit={setNumberedForm}
+            onAction={setAction}
+            onCatalogToggle={(item) => {
+              const issue = item.active
+                ? canRemoveCatalogItem(item, data.numberedItems, data.holdings)
+                : null;
+              if (issue) return setError(issue);
+              if (
+                window.confirm(
+                  item.active
+                    ? "להסיר את סוג הציוד?"
+                    : "להפעיל מחדש את סוג הציוד?",
+                )
+              )
+                void mutate(
+                  (current, repository) =>
+                    repository.setCatalogActive(current, item, !item.active),
+                  item.active ? "סוג הציוד הוסר" : "סוג הציוד הופעל",
+                );
+            }}
+            onNumberedToggle={(item) => {
+              const issue = item.active ? canRemoveNumberedItem(item) : null;
+              if (issue) return setError(issue);
+              if (
+                window.confirm(
+                  item.active ? "להסיר את הפריט?" : "להפעיל מחדש את הפריט?",
+                )
+              )
+                void mutate(
+                  (current, repository) =>
+                    repository.setNumberedItemActive(
+                      current,
+                      item,
+                      !item.active,
+                    ),
+                  item.active ? "הפריט הוסר" : "הפריט הופעל",
+                );
+            }}
+          />
+        )}
+        {view === "history" && (
+          <HistoryView data={data} onSignature={openSignature} />
+        )}
+        {view === "settings" && (
+          <SettingsView
+            data={data}
+            editable={data.meta.editable}
+            onSave={(platoons) =>
+              void mutate(
+                (current, repository) =>
+                  repository.saveSettings(current, {
+                    platoons,
+                    schemaVersion: "2",
+                  }),
+                "המחלקות נשמרו",
+              )
+            }
+            onAddCatalog={() => setCatalogForm("new")}
+            onEditCatalog={setCatalogForm}
+          />
+        )}
+      </main>
+      <nav className="bottom-nav" aria-label="ניווט ראשי">
+        {(
+          [
+            ["dashboard", "בית"],
+            ["signings", "החתמות"],
+            ["soldiers", "חיילים"],
+            ["inventory", "מלאי"],
+            ["history", "תנועות"],
+            ["settings", "הגדרות"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            className={view === id ? "active" : ""}
+            onClick={() => setView(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
-      {data && soldierForm && <SoldierFormModal data={data} soldier={soldierForm === 'new' ? undefined : soldierForm} saving={saving} onClose={() => setSoldierForm(null)} onSave={(input) => mutate((current, repository) => soldierForm === 'new' ? repository.addSoldier(current, input) : repository.editSoldier(current, soldierForm, input), soldierForm === 'new' ? 'החייל נוסף' : 'פרטי החייל עודכנו').then((ok) => { if (ok) setSoldierForm(null); })} />}
-      {data && equipmentForm && <EquipmentFormModal data={data} item={equipmentForm === 'new' ? undefined : equipmentForm} saving={saving} onClose={() => setEquipmentForm(null)} onSave={(input) => mutate((current, repository) => equipmentForm === 'new' ? repository.addEquipment(current, input) : repository.editEquipment(current, equipmentForm, input), equipmentForm === 'new' ? 'הצל״ם נוסף' : 'פרטי הצל״ם עודכנו').then((ok) => { if (ok) setEquipmentForm(null); })} />}
-      {data && assignItem && <AssignmentModal data={data} initialItem={assignItem === 'choose' ? undefined : assignItem} saving={saving} onClose={() => setAssignItem(null)} onSave={(item, soldier, note) => mutate((current, repository) => repository.assign(current, item, soldier, note), item.assignedTo ? 'הצל״ם הועבר' : 'הצל״ם שויך').then((ok) => { if (ok) setAssignItem(null); })} />}
-      {data && returnItem && <NoteModal title={`החזרת ${returnItem.type} ${returnItem.number}`} prompt="הערה (רשות)" confirmLabel="אישור החזרה" saving={saving} onClose={() => setReturnItem(null)} onSave={(note) => mutate((current, repository) => repository.returnEquipment(current, returnItem, note), 'הצל״ם הוחזר').then((ok) => { if (ok) setReturnItem(null); })} />}
-      {data && statusItem && <StatusModal item={statusItem} saving={saving} onClose={() => setStatusItem(null)} onSave={(status, note) => mutate((current, repository) => repository.changeEquipmentStatus(current, statusItem, status, note), 'סטטוס הצל״ם עודכן').then((ok) => { if (ok) setStatusItem(null); })} />}
-      {data && soldierDetail && <SoldierDetail data={data} soldier={soldierDetail} readOnly={data.meta.isReadOnly} saving={saving} onClose={() => setSoldierDetail(null)} onEdit={() => { setSoldierDetail(null); setSoldierForm(soldierDetail); }} onArchive={() => {
-        if (!canArchiveSoldier(soldierDetail.personalNumber, data)) { setError('יש להחזיר או להעביר את כל הציוד לפני הסרת החייל'); return; }
-        if (!window.confirm(soldierDetail.active ? 'להסיר את החייל? ניתן יהיה להפעיל אותו מחדש בהמשך.' : 'להפעיל מחדש את החייל?')) return;
-        void mutate((current, repository) => repository.setSoldierActive(current, soldierDetail, !soldierDetail.active), soldierDetail.active ? 'החייל הוסר' : 'החייל הופעל מחדש').then(() => setSoldierDetail(null));
-      }} />}
-      {data && equipmentDetail && <EquipmentDetail data={data} item={equipmentDetail} readOnly={data.meta.isReadOnly} saving={saving} onClose={() => setEquipmentDetail(null)} onEdit={() => { setEquipmentDetail(null); setEquipmentForm(equipmentDetail); }} onAssign={() => { setEquipmentDetail(null); setAssignItem(equipmentDetail); }} onReturn={() => { setEquipmentDetail(null); setReturnItem(equipmentDetail); }} onStatus={() => { setEquipmentDetail(null); setStatusItem(equipmentDetail); }} onArchive={() => {
-        if (!canArchiveEquipment(equipmentDetail)) { setError('יש להחזיר את הציוד לפני הסרתו'); return; }
-        if (!window.confirm(equipmentDetail.active ? 'להסיר את הצל״ם? ניתן יהיה להפעיל אותו מחדש בהמשך.' : 'להפעיל מחדש את הצל״ם?')) return;
-        void mutate((current, repository) => repository.setEquipmentActive(current, equipmentDetail, !equipmentDetail.active), equipmentDetail.active ? 'הצל״ם הוסר' : 'הצל״ם הופעל מחדש').then(() => setEquipmentDetail(null));
-      }} />}
-    </main>
+      {soldierForm && (
+        <SoldierFormModal
+          data={data}
+          soldier={soldierForm === "new" ? undefined : soldierForm}
+          saving={saving}
+          onClose={() => setSoldierForm(null)}
+          onSave={async (input) => {
+            const ok = await mutate(
+              (current, repository) =>
+                soldierForm === "new"
+                  ? repository.addSoldier(current, input)
+                  : repository.editSoldier(current, soldierForm, input),
+              soldierForm === "new" ? "החייל נוסף" : "פרטי החייל נשמרו",
+            );
+            if (ok) setSoldierForm(null);
+          }}
+        />
+      )}
+      {catalogForm && (
+        <CatalogFormModal
+          data={data}
+          item={catalogForm === "new" ? undefined : catalogForm}
+          saving={saving}
+          onClose={() => setCatalogForm(null)}
+          onSave={async (input) => {
+            const ok = await mutate(
+              (current, repository) =>
+                catalogForm === "new"
+                  ? repository.addCatalogItem(current, input)
+                  : repository.editCatalogItem(current, catalogForm, input),
+              catalogForm === "new" ? "סוג הציוד נוסף" : "סוג הציוד נשמר",
+            );
+            if (ok) setCatalogForm(null);
+          }}
+        />
+      )}
+      {numberedForm && (
+        <NumberedFormModal
+          data={data}
+          item={numberedForm === "new" ? undefined : numberedForm}
+          saving={saving}
+          onClose={() => setNumberedForm(null)}
+          onSave={async (type, variant, number, note) => {
+            const input = {
+              type,
+              variant,
+              number,
+              status: "זמין" as const,
+              note,
+            };
+            const ok = await mutate(
+              (current, repository) =>
+                numberedForm === "new"
+                  ? repository.addNumberedItem(current, input)
+                  : repository.editNumberedItem(current, numberedForm, input),
+              numberedForm === "new" ? "הפריט נוסף" : "הפריט נשמר",
+            );
+            if (ok) setNumberedForm(null);
+          }}
+        />
+      )}
+      {action && (
+        <ActionModal
+          data={data}
+          action={action}
+          saving={saving}
+          onClose={() => setAction(null)}
+          onSubmit={async (values) => {
+            let ok = false;
+            let shareRecipient: Soldier | null = null;
+            if (action.kind === "numbered") {
+              if (action.mode === "assign") {
+                const soldier = data.soldiers.find(
+                  (candidate) => candidate.personalNumber === values.soldier,
+                );
+                if (soldier)
+                  ok = await mutate(
+                    (current, repository) =>
+                      repository.assignNumbered(
+                        current,
+                        action.item,
+                        soldier,
+                        values.note,
+                      ),
+                    action.item.assignedTo ? "הפריט הועבר" : "הפריט הוחתם",
+                  );
+                if (ok && soldier) shareRecipient = soldier;
+              }
+              if (action.mode === "return")
+                ok = await mutate(
+                  (current, repository) =>
+                    repository.returnNumbered(
+                      current,
+                      action.item,
+                      values.note,
+                    ),
+                  "הפריט הוחזר",
+                );
+              if (action.mode === "status")
+                ok = await mutate(
+                  (current, repository) =>
+                    repository.changeNumberedStatus(
+                      current,
+                      action.item,
+                      values.status as EquipmentStatus,
+                      values.note,
+                    ),
+                  "הסטטוס עודכן",
+                );
+            } else if (action.kind === "stock")
+              ok = await mutate(
+                (current, repository) =>
+                  repository.adjustStock(
+                    current,
+                    action.item,
+                    Number(values.quantity),
+                    values.note,
+                  ),
+                "המלאי עודכן",
+              );
+            else {
+              const soldier =
+                action.soldier ||
+                data.soldiers.find(
+                  (candidate) => candidate.personalNumber === values.soldier,
+                );
+              const target = data.soldiers.find(
+                (candidate) => candidate.personalNumber === values.target,
+              );
+              if (action.mode === "issue" && soldier)
+                ok = await mutate(
+                  (current, repository) =>
+                    repository.issueQuantity(
+                      current,
+                      action.item,
+                      soldier,
+                      Number(values.quantity),
+                      values.note,
+                    ),
+                  "הציוד הוחתם",
+                );
+              if (ok && action.mode === "issue" && soldier)
+                shareRecipient = soldier;
+              if (action.mode === "return" && soldier)
+                ok = await mutate(
+                  (current, repository) =>
+                    repository.returnQuantity(
+                      current,
+                      action.item,
+                      soldier,
+                      Number(values.quantity),
+                      values.note,
+                    ),
+                  "הציוד הוחזר",
+                );
+              if (action.mode === "transfer" && soldier && target)
+                ok = await mutate(
+                  (current, repository) =>
+                    repository.transferQuantity(
+                      current,
+                      action.item,
+                      soldier,
+                      target,
+                      Number(values.quantity),
+                      values.note,
+                    ),
+                  "הציוד הועבר",
+                );
+              if (ok && action.mode === "transfer" && target)
+                shareRecipient = target;
+            }
+            if (ok) {
+              setAction(null);
+              setSoldierDetail(null);
+              setCatalogDetail(null);
+              if (shareRecipient) setMovementShareSoldier(shareRecipient);
+            }
+          }}
+        />
+      )}
+      {soldierDetail && (
+        <SoldierDetail
+          data={data}
+          soldier={soldierDetail}
+          editable={data.meta.editable}
+          onClose={() => setSoldierDetail(null)}
+          onNumbered={(item, mode) =>
+            setAction({ kind: "numbered", item, mode })
+          }
+          onQuantity={(item, mode) =>
+            setAction({ kind: "quantity", item, soldier: soldierDetail, mode })
+          }
+          onShare={() => setMovementShareSoldier(soldierDetail)}
+          onSignature={openSignature}
+        />
+      )}
+      {movementShareSoldier && (
+        <MovementShareModal
+          data={data}
+          soldier={movementShareSoldier}
+          onClose={() => setMovementShareSoldier(null)}
+        />
+      )}
+      {signingReceipt && (
+        <SigningReceiptModal
+          receipt={signingReceipt}
+          onClose={() => setSigningReceipt(null)}
+        />
+      )}
+      {signatureViewer && (
+        <SignatureViewerModal
+          state={signatureViewer}
+          onClose={() => setSignatureViewer(null)}
+          onRetry={() => void openSignature(signatureViewer.summary)}
+        />
+      )}
+      {catalogDetail && (
+        <CatalogDetail
+          data={data}
+          item={catalogDetail}
+          editable={data.meta.editable}
+          onClose={() => setCatalogDetail(null)}
+          onAction={setAction}
+        />
+      )}
+    </div>
   );
 }
 
-function StatePanel({ title, children, loading }: { title: string; children?: ReactNode; loading?: boolean }) {
-  return <section className="state-panel"><div>{loading && <div className="spinner" />}<h2>{title}</h2>{children}</div></section>;
+function ShellHeader({
+  name,
+  onSignOut,
+  children,
+}: {
+  name: string;
+  onSignOut: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="welcome" dir="rtl">
+      <header className="topbar">
+        <div className="brand">
+          <img src={logoUrl} alt="" />
+          <strong>ציוד פלוגתי</strong>
+        </div>
+        <div className="user-area">
+          <span>{name}</span>
+          <button className="text-button" onClick={onSignOut}>
+            יציאה
+          </button>
+        </div>
+      </header>
+      {children}
+    </div>
+  );
+}
+function Splash({ text }: { text: string }) {
+  return (
+    <div className="splash" dir="rtl">
+      <img src={logoUrl} alt="" />
+      <h1>ציוד פלוגתי</h1>
+      <p>{text}</p>
+    </div>
+  );
+}
+function Welcome({ error, onSignIn }: { error: string; onSignIn: () => void }) {
+  return (
+    <div className="welcome" dir="rtl">
+      <div className="welcome-card">
+        <img src={logoUrl} alt="" />
+        <h1>ציוד פלוגתי</h1>
+        <p>ניהול צל״מ וציוד כמותי לפלוגה</p>
+        {error && <p className="form-error">{error}</p>}
+        <button className="google-button" onClick={onSignIn}>
+          התחברות עם Google
+        </button>
+      </div>
+    </div>
+  );
+}
+function SheetPicker({
+  value,
+  setValue,
+  error,
+  onSubmit,
+  onSignOut,
+}: {
+  value: string;
+  setValue: (value: string) => void;
+  error: string;
+  onSubmit: (event: FormEvent) => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <ShellHeader name={auth.currentUserName()} onSignOut={onSignOut}>
+      <form className="center-card" onSubmit={onSubmit}>
+        <h2>בחירת גיליון</h2>
+        <p>הדביקו קישור לגיליון Google Sheets או את המזהה שלו.</p>
+        <Field label="קישור או מזהה">
+          <input
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            dir="ltr"
+          />
+        </Field>
+        {error && <p className="form-error">{error}</p>}
+        <button className="primary-button">פתיחת הגיליון</button>
+      </form>
+    </ShellHeader>
+  );
 }
 
-function Dashboard({ data, onAddSoldier, onAddEquipment, onAssign, readOnly }: { data: CompanyData; onAddSoldier: () => void; onAddEquipment: () => void; onAssign: () => void; readOnly: boolean }) {
-  const active = data.equipment.filter((item) => item.active);
-  const stats = [
-    ['סה״כ צל״ם', active.length, 'neutral'],
-    ['משויך', active.filter((item) => item.status === 'משויך').length, 'info'],
-    ['זמין', active.filter((item) => item.status === 'זמין').length, 'success'],
-    ['תקול / בתיקון', active.filter((item) => item.status === 'תקול' || item.status === 'בתיקון').length, 'warning'],
-    ['אבוד', active.filter((item) => item.status === 'אבוד').length, 'danger'],
-    ['חיילים ללא צל״ם', soldiersWithoutEquipment(data), 'neutral'],
+function Dashboard({
+  data,
+  editable,
+  onView,
+  onAddSoldier,
+  onAddNumbered,
+  onIssue,
+}: {
+  data: CompanyData;
+  editable: boolean;
+  onView: (view: View) => void;
+  onAddSoldier: () => void;
+  onAddNumbered: () => void;
+  onIssue: () => void;
+}) {
+  const activeNumbered = data.numberedItems.filter((item) => item.active);
+  const quantityTotal = data.catalog
+    .filter((item) => item.active && item.method === "כמותי")
+    .reduce((sum, item) => sum + item.totalStock, 0);
+  const quantityIssued = data.holdings.reduce(
+    (sum, holding) => sum + holding.quantity,
+    0,
+  );
+  const cards = [
+    ["פריטי צל״מ", activeNumbered.length],
+    ["צל״מ משויך", activeNumbered.filter((item) => item.assignedTo).length],
+    [
+      "צל״מ זמין",
+      activeNumbered.filter((item) => item.status === "זמין").length,
+    ],
+    ["יחידות כמותיות", quantityTotal],
+    ["יחידות מוחזקות", quantityIssued],
+    [
+      "תקול / בתיקון",
+      activeNumbered.filter((item) => ["תקול", "בתיקון"].includes(item.status))
+        .length,
+    ],
+    ["אבוד", activeNumbered.filter((item) => item.status === "אבוד").length],
+    [
+      "חיילים ללא ציוד",
+      soldiersWithoutEquipment(data.soldiers, data.numberedItems, data.holdings)
+        .length,
+    ],
   ];
-  return <div className="page"><div className="page-heading"><div><h2>תמונת מצב</h2><p>נתונים עדכניים מהגיליון הפלוגתי</p></div></div>
-    <div className="stats-grid">{stats.map(([label, value, tone]) => <article className={`stat-card ${tone}`} key={String(label)}><strong>{value}</strong><span>{label}</span></article>)}</div>
-    <div className="quick-actions"><button className="primary-button" disabled={readOnly} onClick={onAssign}>שיוך ציוד</button><button className="secondary-button" disabled={readOnly} onClick={onAddSoldier}>הוספת חייל</button><button className="secondary-button" disabled={readOnly} onClick={onAddEquipment}>הוספת צל״ם</button></div>
-    <section className="panel"><div className="section-heading"><h3>פעילות אחרונה</h3></div>{data.history.length ? <HistoryList data={data} entries={[...data.history].reverse().slice(0, 8)} /> : <EmptyList>עדיין אין פעילות מתועדת.</EmptyList>}</section>
-  </div>;
+  return (
+    <section>
+      <div className="page-heading">
+        <div>
+          <h1>תמונת מצב</h1>
+          <p>המצב הנוכחי של הציוד הפלוגתי</p>
+        </div>
+      </div>
+      <div className="stats-grid">
+        {cards.map(([label, value]) => (
+          <article className="stat-card" key={label}>
+            <strong>{value}</strong>
+            <span>{label}</span>
+          </article>
+        ))}
+      </div>
+      {editable && (
+        <div className="quick-actions">
+          <button className="primary-button" onClick={onIssue}>
+            החתמת ציוד
+          </button>
+          <button className="secondary-button" onClick={onAddSoldier}>
+            הוספת חייל
+          </button>
+          <button className="secondary-button" onClick={onAddNumbered}>
+            הוספת פריט צל״מ
+          </button>
+        </div>
+      )}
+      <section className="panel">
+        <div className="section-heading">
+          <h2>פעילות אחרונה</h2>
+          <button className="text-button" onClick={() => onView("history")}>
+            לכל התנועות
+          </button>
+        </div>
+        {data.movements.length ? (
+          <div className="activity-list">
+            {[...data.movements]
+              .reverse()
+              .slice(0, 8)
+              .map((entry) => (
+                <div key={entry.row}>
+                  <strong>{entry.action}</strong>
+                  <span>
+                    {itemLabel(entry.type, entry.variant)} {entry.number}{" "}
+                    {entry.quantity ? `× ${entry.quantity}` : ""}
+                  </span>
+                  <small>{displayDate(entry.timestamp)}</small>
+                </div>
+              ))}
+          </div>
+        ) : (
+          <EmptyList>אין עדיין פעילות.</EmptyList>
+        )}
+      </section>
+    </section>
+  );
 }
 
-function SoldiersView({ data, onDetail, onAdd, readOnly }: { data: CompanyData; onDetail: (soldier: Soldier) => void; onAdd: () => void; readOnly: boolean }) {
-  const [query, setQuery] = useState('');
-  const [platoon, setPlatoon] = useState('');
-  const [equipmentState, setEquipmentState] = useState('');
+function SoldiersView({
+  data,
+  editable,
+  onAdd,
+  onEdit,
+  onOpen,
+  onToggle,
+}: {
+  data: CompanyData;
+  editable: boolean;
+  onAdd: () => void;
+  onEdit: (soldier: Soldier) => void;
+  onOpen: (soldier: Soldier) => void;
+  onToggle: (soldier: Soldier) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [platoon, setPlatoon] = useState("");
+  const [equipmentState, setEquipmentState] = useState("");
   const [showArchived, setShowArchived] = useState(false);
-  const filtered = data.soldiers.filter((soldier) => {
-    const itemCount = equipmentForSoldier(data, soldier.personalNumber).length;
-    return (showArchived || soldier.active)
-      && (!platoon || soldier.platoon === platoon)
-      && (!equipmentState || (equipmentState === 'assigned' ? itemCount > 0 : itemCount === 0))
-      && `${soldier.name} ${soldier.personalNumber} ${soldier.platoon}`.includes(query.trim());
-  });
-  return <div className="page"><div className="page-heading"><div><h2>חיילים</h2><p>{filtered.length} רשומות</p></div><div className="heading-actions"><button className="whatsapp-button" type="button" title="שיתוף ב-WhatsApp" aria-label="שיתוף רשימת החיילים ב-WhatsApp" disabled={!filtered.length} onClick={() => shareOnWhatsApp(buildSoldiersWhatsAppMessage(data, filtered, { query, platoon, equipmentState, showArchived }))}><img src={whatsappIconUrl} alt="" aria-hidden="true" /></button><button className="primary-button compact" disabled={readOnly} onClick={onAdd}>הוספת חייל</button></div></div>
-    <div className="filters"><input placeholder="חיפוש לפי שם או מספר אישי" value={query} onChange={(e) => setQuery(e.target.value)} /><select value={platoon} onChange={(e) => setPlatoon(e.target.value)}><option value="">כל המחלקות</option>{data.settings.platoons.map((value) => <option key={value}>{value}</option>)}</select><select value={equipmentState} onChange={(e) => setEquipmentState(e.target.value)}><option value="">כל מצבי השיוך</option><option value="assigned">עם צל״ם</option><option value="none">ללא צל״ם</option></select><label className="check"><input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> כולל שהוסרו</label></div>
-    <div className="record-list">{filtered.map((soldier) => <button className={`record-card ${soldier.active ? '' : 'archived'}`} key={`${soldier.row}-${soldier.personalNumber}`} onClick={() => onDetail(soldier)}><div><strong>{soldier.name}</strong><span><bdi>{soldier.personalNumber}</bdi> · מחלקה {soldier.platoon}</span></div><div className="record-side"><span className="count-pill">{equipmentForSoldier(data, soldier.personalNumber).length} פריטים</span><span aria-hidden="true">‹</span></div></button>)}</div>{!filtered.length && <EmptyList>לא נמצאו חיילים התואמים לסינון.</EmptyList>}
-  </div>;
+  const filtered = data.soldiers.filter(
+    (soldier) =>
+      (showArchived || soldier.active) &&
+      (!platoon || soldier.platoon === platoon) &&
+      (!query ||
+        `${soldier.name} ${soldier.personalNumber} ${soldier.phone}`.includes(
+          query.trim(),
+        )) &&
+      (!equipmentState ||
+        (equipmentState === "assigned") ===
+          soldierHasEquipment(soldier, data.numberedItems, data.holdings)),
+  );
+  return (
+    <section>
+      <div className="page-heading">
+        <div>
+          <h1>חיילים</h1>
+          <p>{filtered.length} תוצאות</p>
+        </div>
+        <div className="heading-actions">
+          <button
+            className="icon-button share-button"
+            title="שיתוף ב-WhatsApp"
+            aria-label="שיתוף רשימת החיילים ב-WhatsApp"
+            onClick={() =>
+              shareOnWhatsApp(
+                buildSoldiersWhatsAppMessage(data, filtered, {
+                  query,
+                  platoon,
+                  equipmentState,
+                  showArchived,
+                }),
+              )
+            }
+          >
+            <img src={whatsappIconUrl} alt="" />
+          </button>
+          {editable && (
+            <button className="primary-button" onClick={onAdd}>
+              הוספת חייל
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="filters">
+        <input
+          placeholder="חיפוש שם, מספר אישי או טלפון"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <select
+          value={platoon}
+          onChange={(event) => setPlatoon(event.target.value)}
+        >
+          <option value="">כל המחלקות</option>
+          {data.settings.platoons.map((value) => (
+            <option key={value}>{value}</option>
+          ))}
+        </select>
+        <select
+          value={equipmentState}
+          onChange={(event) => setEquipmentState(event.target.value)}
+        >
+          <option value="">עם וללא ציוד</option>
+          <option value="assigned">עם ציוד</option>
+          <option value="none">ללא ציוד</option>
+        </select>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(event) => setShowArchived(event.target.checked)}
+          />
+          כולל שהוסרו
+        </label>
+      </div>
+      <div className="cards-list">
+        {filtered.map((soldier) => {
+          const numbered = numberedItemsForSoldier(
+            data.numberedItems,
+            soldier.personalNumber,
+          );
+          const quantities = holdingsForSoldier(
+            data.holdings,
+            soldier.personalNumber,
+          );
+          return (
+            <article
+              className={`list-card ${soldier.active ? "" : "archived"}`}
+              key={soldier.personalNumber}
+              onClick={() => onOpen(soldier)}
+            >
+              <div>
+                <h3>{soldier.name}</h3>
+                <p>
+                  <bdi>{soldier.personalNumber}</bdi> · מחלקה {soldier.platoon}
+                </p>
+                {soldier.phone && (
+                  <small>
+                    טלפון: <bdi>{soldier.phone}</bdi>
+                  </small>
+                )}
+                <small>
+                  {numbered.length} פריטי צל״מ ·{" "}
+                  {quantities.reduce(
+                    (sum, holding) => sum + holding.quantity,
+                    0,
+                  )}{" "}
+                  יחידות כמותיות
+                </small>
+              </div>
+              {editable && (
+                <div
+                  className="card-actions"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    className="small-button"
+                    onClick={() => onEdit(soldier)}
+                  >
+                    עריכה
+                  </button>
+                  <button
+                    className="small-button danger-text"
+                    onClick={() => onToggle(soldier)}
+                  >
+                    {soldier.active ? "הסרה" : "הפעלה"}
+                  </button>
+                </div>
+              )}
+            </article>
+          );
+        })}
+        {!filtered.length && <EmptyList>לא נמצאו חיילים.</EmptyList>}
+      </div>
+    </section>
+  );
 }
 
-function EquipmentView({ data, onDetail, onAdd, readOnly }: { data: CompanyData; onDetail: (item: Equipment) => void; onAdd: () => void; readOnly: boolean }) {
-  const [query, setQuery] = useState('');
-  const [type, setType] = useState('');
-  const [status, setStatus] = useState('');
-  const [platoon, setPlatoon] = useState('');
+function SigningsView({
+  data,
+  editable,
+  saving,
+  onSave,
+}: {
+  data: CompanyData;
+  editable: boolean;
+  saving: boolean;
+  onSave: (soldier: Soldier, input: SigningSessionInput) => Promise<boolean>;
+}) {
+  const [query, setQuery] = useState("");
+  const [selectedSoldier, setSelectedSoldier] = useState<Soldier | null>(null);
+  const [selectedNumbered, setSelectedNumbered] = useState<Set<string>>(
+    new Set(),
+  );
+  const [quantityValues, setQuantityValues] = useState<Record<string, number>>(
+    {},
+  );
+  const [numberedToAdd, setNumberedToAdd] = useState("");
+  const [quantityToAdd, setQuantityToAdd] = useState("");
+  const [addQuantity, setAddQuantity] = useState(1);
+  const [pendingSigning, setPendingSigning] = useState<Omit<
+    SigningSessionInput,
+    "signature"
+  > | null>(null);
+
+  const soldierMatches = useMemo(
+    () =>
+      data.soldiers
+        .filter((soldier) => soldier.active)
+        .map((soldier) => ({
+          soldier,
+          score: fuzzyScore(
+            `${soldier.name} ${soldier.personalNumber} ${soldier.phone} ${soldier.platoon}`,
+            query,
+          ),
+        }))
+        .filter((match) => match.score > 0)
+        .sort(
+          (left, right) =>
+            right.score - left.score ||
+            left.soldier.name.localeCompare(right.soldier.name, "he"),
+        )
+        .slice(0, 12),
+    [data.soldiers, query],
+  );
+
+  useEffect(() => {
+    if (!selectedSoldier) {
+      setSelectedNumbered(new Set());
+      setQuantityValues({});
+      return;
+    }
+    setSelectedNumbered(
+      new Set(
+        data.numberedItems
+          .filter(
+            (item) =>
+              item.active && item.assignedTo === selectedSoldier.personalNumber,
+          )
+          .map((item) => numberedItemKey(item.type, item.number)),
+      ),
+    );
+    setQuantityValues(
+      Object.fromEntries(
+        data.holdings
+          .filter(
+            (holding) =>
+              holding.personalNumber === selectedSoldier.personalNumber &&
+              holding.quantity > 0,
+          )
+          .map((holding) => [
+            catalogKey(holding.type, holding.variant),
+            holding.quantity,
+          ]),
+      ),
+    );
+    setNumberedToAdd("");
+    setQuantityToAdd("");
+    setAddQuantity(1);
+  }, [data, selectedSoldier]);
+
+  if (!selectedSoldier) {
+    return (
+      <section>
+        <div className="page-heading">
+          <div>
+            <h1>החתמות</h1>
+            <p>בחירת חייל ועריכת כל הציוד החתום עליו בפעולה אחת</p>
+          </div>
+        </div>
+        <section className="panel soldier-picker">
+          <Field label="חיפוש חייל">
+            <input
+              autoFocus
+              placeholder="שם, מספר אישי, טלפון או מחלקה"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </Field>
+          <div className="cards-list compact search-results">
+            {soldierMatches.map(({ soldier }) => (
+              <button
+                type="button"
+                className="soldier-result"
+                key={soldier.personalNumber}
+                onClick={() => setSelectedSoldier(soldier)}
+              >
+                <strong>{soldier.name}</strong>
+                <span>
+                  <bdi>{soldier.personalNumber}</bdi> · מחלקה {soldier.platoon}
+                </span>
+              </button>
+            ))}
+            {!soldierMatches.length && <EmptyList>לא נמצאו חיילים.</EmptyList>}
+          </div>
+        </section>
+      </section>
+    );
+  }
+
+  const currentNumbered = data.numberedItems.filter(
+    (item) => item.active && item.assignedTo === selectedSoldier.personalNumber,
+  );
+  const selectedNumberedItems = data.numberedItems.filter((item) =>
+    selectedNumbered.has(numberedItemKey(item.type, item.number)),
+  );
+  const availableNumbered = data.numberedItems.filter(
+    (item) =>
+      item.active &&
+      item.status === "זמין" &&
+      !item.assignedTo &&
+      !selectedNumbered.has(numberedItemKey(item.type, item.number)),
+  );
+  const quantityCatalog = data.catalog.filter(
+    (item) => item.active && item.method === "כמותי",
+  );
+  const currentQuantity = (item: CatalogItem) =>
+    data.holdings.find(
+      (holding) =>
+        holding.personalNumber === selectedSoldier.personalNumber &&
+        catalogKey(holding.type, holding.variant) ===
+          catalogKey(item.type, item.variant),
+    )?.quantity || 0;
+  const numberedToAssign = selectedNumberedItems.filter(
+    (item) => item.assignedTo !== selectedSoldier.personalNumber,
+  );
+  const numberedToReturn = currentNumbered.filter(
+    (item) => !selectedNumbered.has(numberedItemKey(item.type, item.number)),
+  );
+  const quantityTargets = quantityCatalog
+    .map((item) => ({
+      item,
+      quantity: quantityValues[catalogKey(item.type, item.variant)] || 0,
+    }))
+    .filter((target) => target.quantity !== currentQuantity(target.item));
+  const changeCount =
+    numberedToAssign.length + numberedToReturn.length + quantityTargets.length;
+  const displayedQuantityItems = quantityCatalog.filter(
+    (item) => (quantityValues[catalogKey(item.type, item.variant)] || 0) > 0,
+  );
+  const quantityAddItem = quantityCatalog.find(
+    (item) => catalogKey(item.type, item.variant) === quantityToAdd,
+  );
+
+  return (
+    <section>
+      <div className="page-heading">
+        <div>
+          <h1>החתמה — {selectedSoldier.name}</h1>
+          <p>
+            <bdi>{selectedSoldier.personalNumber}</bdi> · מחלקה{" "}
+            {selectedSoldier.platoon}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => {
+            setSelectedSoldier(null);
+            setQuery("");
+          }}
+        >
+          החלפת חייל
+        </button>
+      </div>
+
+      <section className="panel">
+        <h2>ציוד חתום</h2>
+        <div className="cards-list compact">
+          {selectedNumberedItems.map((item) => (
+            <article
+              className="list-card"
+              key={numberedItemKey(item.type, item.number)}
+            >
+              <div>
+                <strong>
+                  {itemLabel(item.type, item.variant)} · {item.number}
+                </strong>
+                <p>צל״מ</p>
+              </div>
+              {editable && (
+                <button
+                  type="button"
+                  className="small-button danger-text"
+                  onClick={() => {
+                    const next = new Set(selectedNumbered);
+                    next.delete(numberedItemKey(item.type, item.number));
+                    setSelectedNumbered(next);
+                  }}
+                >
+                  הסרה
+                </button>
+              )}
+            </article>
+          ))}
+          {displayedQuantityItems.map((item) => {
+            const key = catalogKey(item.type, item.variant);
+            return (
+              <article className="list-card" key={key}>
+                <div>
+                  <strong>
+                    {itemLabel(item.type, item.variant, item.variantLabel)}
+                  </strong>
+                  <p>כמותי</p>
+                </div>
+                {editable && (
+                  <div className="quantity-editor">
+                    <input
+                      aria-label={`כמות ${itemLabel(item.type, item.variant, item.variantLabel)}`}
+                      type="number"
+                      min="0"
+                      max={
+                        currentQuantity(item) +
+                        availableQuantity(item, data.holdings)
+                      }
+                      step="1"
+                      value={quantityValues[key] || 0}
+                      onChange={(event) =>
+                        setQuantityValues((current) => ({
+                          ...current,
+                          [key]: Math.max(0, Number(event.target.value) || 0),
+                        }))
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="small-button danger-text"
+                      onClick={() =>
+                        setQuantityValues((current) => ({
+                          ...current,
+                          [key]: 0,
+                        }))
+                      }
+                    >
+                      הסרה
+                    </button>
+                  </div>
+                )}
+              </article>
+            );
+          })}
+          {!selectedNumberedItems.length && !displayedQuantityItems.length && (
+            <EmptyList>אין ציוד חתום לחייל.</EmptyList>
+          )}
+        </div>
+      </section>
+
+      {editable && (
+        <section className="panel signing-add-panel">
+          <h2>הוספת ציוד</h2>
+          <div className="signing-add-grid">
+            <div>
+              <Field label="פריט צל״מ זמין">
+                <select
+                  value={numberedToAdd}
+                  onChange={(event) => setNumberedToAdd(event.target.value)}
+                >
+                  <option value="">בחירה</option>
+                  {availableNumbered.map((item) => {
+                    const key = numberedItemKey(item.type, item.number);
+                    return (
+                      <option key={key} value={key}>
+                        {itemLabel(item.type, item.variant)} · {item.number}
+                      </option>
+                    );
+                  })}
+                </select>
+              </Field>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={!numberedToAdd}
+                onClick={() => {
+                  setSelectedNumbered(
+                    (current) => new Set([...current, numberedToAdd]),
+                  );
+                  setNumberedToAdd("");
+                }}
+              >
+                הוספה
+              </button>
+            </div>
+            <div>
+              <Field label="ציוד כמותי">
+                <select
+                  value={quantityToAdd}
+                  onChange={(event) => setQuantityToAdd(event.target.value)}
+                >
+                  <option value="">בחירה</option>
+                  {quantityCatalog.map((item) => {
+                    const key = catalogKey(item.type, item.variant);
+                    return (
+                      <option key={key} value={key}>
+                        {itemLabel(item.type, item.variant, item.variantLabel)}{" "}
+                        · זמין {availableQuantity(item, data.holdings)}
+                      </option>
+                    );
+                  })}
+                </select>
+              </Field>
+              <Field label="כמות להוספה">
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={addQuantity}
+                  onChange={(event) =>
+                    setAddQuantity(Math.max(1, Number(event.target.value) || 1))
+                  }
+                />
+              </Field>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={
+                  !quantityAddItem ||
+                  availableQuantity(quantityAddItem, data.holdings) <= 0
+                }
+                onClick={() => {
+                  if (!quantityAddItem) return;
+                  const maximum =
+                    currentQuantity(quantityAddItem) +
+                    availableQuantity(quantityAddItem, data.holdings);
+                  setQuantityValues((current) => ({
+                    ...current,
+                    [quantityToAdd]: Math.min(
+                      maximum,
+                      (current[quantityToAdd] || 0) + addQuantity,
+                    ),
+                  }));
+                  setQuantityToAdd("");
+                  setAddQuantity(1);
+                }}
+              >
+                הוספה
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <div className="signing-save-bar">
+        <span>
+          {changeCount
+            ? `${changeCount} שינויים ממתינים`
+            : "אין שינויים לשמירה"}
+        </span>
+        <button
+          className="primary-button"
+          disabled={!editable || saving || !changeCount}
+          onClick={() =>
+            setPendingSigning({
+              numberedToAssign,
+              numberedToReturn,
+              quantityTargets,
+            })
+          }
+        >
+          שמירת ההחתמה
+        </button>
+      </div>
+      {pendingSigning && (
+        <SignatureModal
+          soldier={selectedSoldier}
+          changeCount={changeCount}
+          saving={saving}
+          onClose={() => setPendingSigning(null)}
+          onConfirm={async (signature) => {
+            const saved = await onSave(selectedSoldier, {
+              ...pendingSigning,
+              signature,
+            });
+            if (saved) setPendingSigning(null);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function InventoryView({
+  data,
+  editable,
+  onAddCatalog,
+  onAddNumbered,
+  onCatalog,
+  onCatalogEdit,
+  onNumberedEdit,
+  onAction,
+  onCatalogToggle,
+  onNumberedToggle,
+}: {
+  data: CompanyData;
+  editable: boolean;
+  onAddCatalog: () => void;
+  onAddNumbered: () => void;
+  onCatalog: (item: CatalogItem) => void;
+  onCatalogEdit: (item: CatalogItem) => void;
+  onNumberedEdit: (item: NumberedItem) => void;
+  onAction: (action: Action) => void;
+  onCatalogToggle: (item: CatalogItem) => void;
+  onNumberedToggle: (item: NumberedItem) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [type, setType] = useState("");
+  const [method, setMethod] = useState("");
+  const [status, setStatus] = useState("");
+  const [platoon, setPlatoon] = useState("");
   const [showArchived, setShowArchived] = useState(false);
-  const filtered = data.equipment.filter((item) => {
-    const holder = data.soldiers.find((soldier) => soldier.personalNumber === item.assignedTo);
-    return (showArchived || item.active)
-      && (!type || item.type === type)
-      && (!status || item.status === status)
-      && (!platoon || holder?.platoon === platoon)
-      && `${item.type} ${item.number} ${item.assignedTo} ${soldierName(data, item.assignedTo)}`.includes(query.trim());
-  });
-  return <div className="page"><div className="page-heading"><div><h2>מלאי צל״ם</h2><p>{filtered.length} פריטים</p></div><div className="heading-actions"><button className="whatsapp-button" type="button" title="שיתוף ב-WhatsApp" aria-label="שיתוף מלאי הצל״ם ב-WhatsApp" disabled={!filtered.length} onClick={() => shareOnWhatsApp(buildEquipmentWhatsAppMessage(data, filtered, { query, type, status, platoon, showArchived }))}><img src={whatsappIconUrl} alt="" aria-hidden="true" /></button><button className="primary-button compact" disabled={readOnly} onClick={onAdd}>הוספת צל״ם</button></div></div>
-    <div className="filters"><input placeholder="חיפוש לפי סוג, מספר צ או חייל" value={query} onChange={(e) => setQuery(e.target.value)} /><select value={type} onChange={(e) => setType(e.target.value)}><option value="">כל הסוגים</option>{data.settings.equipmentTypes.map((value) => <option key={value}>{value}</option>)}</select><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">כל הסטטוסים</option>{EQUIPMENT_STATUSES.map((value) => <option key={value}>{value}</option>)}</select><select value={platoon} onChange={(e) => setPlatoon(e.target.value)}><option value="">כל המחלקות</option>{data.settings.platoons.map((value) => <option key={value}>{value}</option>)}</select><label className="check"><input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> כולל שהוסרו</label></div>
-    <div className="record-list">{filtered.map((item) => <button className={`record-card ${item.active ? '' : 'archived'}`} key={`${item.row}-${equipmentKey(item.type, item.number)}`} onClick={() => onDetail(item)}><div><strong>{item.type} <bdi>{item.number}</bdi></strong><span>{item.assignedTo ? `אצל ${soldierName(data, item.assignedTo)}` : 'ללא חייל משויך'}</span></div><div className="record-side"><span className={`status-pill ${statusClass(item.status)}`}>{item.status}</span><span aria-hidden="true">‹</span></div></button>)}</div>{!filtered.length && <EmptyList>לא נמצאו פריטי צל״ם התואמים לסינון.</EmptyList>}
-  </div>;
+  const holderMatches = (personalNumber: string) =>
+    !platoon ||
+    data.soldiers.find((soldier) => soldier.personalNumber === personalNumber)
+      ?.platoon === platoon;
+  const numbered = data.numberedItems.filter(
+    (item) =>
+      (showArchived || item.active) &&
+      (!type || item.type === type) &&
+      (!method || method === "צל״מ") &&
+      (!status || item.status === status) &&
+      (!platoon || holderMatches(item.assignedTo)) &&
+      (!query ||
+        `${item.type} ${item.variant} ${item.number}`.includes(query.trim())),
+  );
+  const quantity = data.catalog.filter(
+    (item) =>
+      item.method === "כמותי" &&
+      (showArchived || item.active) &&
+      (!type || item.type === type) &&
+      (!method || method === "כמותי") &&
+      !status &&
+      (!query || `${item.type} ${item.variant}`.includes(query.trim())) &&
+      (!platoon ||
+        data.holdings.some(
+          (holding) =>
+            holding.type === item.type &&
+            holding.variant === item.variant &&
+            holderMatches(holding.personalNumber),
+        )),
+  );
+  const filters = { query, type, method, status, platoon, showArchived };
+  return (
+    <section>
+      <div className="page-heading">
+        <div>
+          <h1>מלאי ציוד</h1>
+          <p>
+            {numbered.length} פריטי צל״מ · {quantity.length} סוגים כמותיים
+          </p>
+        </div>
+        <div className="heading-actions">
+          <button
+            className="icon-button share-button"
+            title="שיתוף ב-WhatsApp"
+            aria-label="שיתוף מלאי הציוד ב-WhatsApp"
+            onClick={() =>
+              shareOnWhatsApp(
+                buildInventoryWhatsAppMessage(
+                  data,
+                  numbered,
+                  quantity,
+                  filters,
+                ),
+              )
+            }
+          >
+            <img src={whatsappIconUrl} alt="" />
+          </button>
+          {editable && (
+            <>
+              <button className="secondary-button" onClick={onAddCatalog}>
+                סוג ציוד חדש
+              </button>
+              <button className="primary-button" onClick={onAddNumbered}>
+                פריט צל״מ חדש
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="filters">
+        <input
+          placeholder="חיפוש סוג, מאפיין או מספר"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <select
+          value={method}
+          onChange={(event) => setMethod(event.target.value)}
+        >
+          <option value="">כל שיטות הניהול</option>
+          {MANAGEMENT_METHODS.map((value) => (
+            <option key={value}>{value}</option>
+          ))}
+        </select>
+        <select value={type} onChange={(event) => setType(event.target.value)}>
+          <option value="">כל הסוגים</option>
+          {[...new Set(data.catalog.map((item) => item.type))].map((value) => (
+            <option key={value}>{value}</option>
+          ))}
+        </select>
+        <select
+          value={status}
+          onChange={(event) => setStatus(event.target.value)}
+        >
+          <option value="">כל הסטטוסים</option>
+          {EQUIPMENT_STATUSES.map((value) => (
+            <option key={value}>{value}</option>
+          ))}
+        </select>
+        <select
+          value={platoon}
+          onChange={(event) => setPlatoon(event.target.value)}
+        >
+          <option value="">כל המחלקות</option>
+          {data.settings.platoons.map((value) => (
+            <option key={value}>{value}</option>
+          ))}
+        </select>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(event) => setShowArchived(event.target.checked)}
+          />
+          כולל שהוסרו
+        </label>
+      </div>
+      <div className="cards-list">
+        {numbered.map((item) => {
+          const holder = data.soldiers.find(
+            (soldier) => soldier.personalNumber === item.assignedTo,
+          );
+          return (
+            <article
+              className={`list-card ${item.active ? "" : "archived"}`}
+              key={`${item.type}-${item.number}`}
+            >
+              <div>
+                <h3>
+                  {itemLabel(item.type, item.variant)} ·{" "}
+                  <bdi>{item.number}</bdi>
+                </h3>
+                <p>
+                  {holder
+                    ? `${holder.name} · מחלקה ${holder.platoon}`
+                    : "לא משויך"}
+                </p>
+                <span className={`status ${statusClass(item.status)}`}>
+                  {item.status}
+                </span>
+              </div>
+              {editable && (
+                <div className="card-actions">
+                  <button
+                    className="small-button"
+                    onClick={() =>
+                      onAction({ kind: "numbered", item, mode: "assign" })
+                    }
+                  >
+                    {item.assignedTo ? "העברה" : "החתמה"}
+                  </button>
+                  {item.assignedTo && (
+                    <button
+                      className="small-button"
+                      onClick={() =>
+                        onAction({ kind: "numbered", item, mode: "return" })
+                      }
+                    >
+                      החזרה
+                    </button>
+                  )}
+                  <button
+                    className="small-button"
+                    onClick={() =>
+                      onAction({ kind: "numbered", item, mode: "status" })
+                    }
+                  >
+                    סטטוס
+                  </button>
+                  <button
+                    className="small-button"
+                    onClick={() => onNumberedEdit(item)}
+                  >
+                    עריכה
+                  </button>
+                  <button
+                    className="small-button danger-text"
+                    onClick={() => onNumberedToggle(item)}
+                  >
+                    {item.active ? "הסר" : "הפעל"}
+                  </button>
+                </div>
+              )}
+            </article>
+          );
+        })}
+        {quantity.map((item) => (
+          <article
+            className={`list-card quantity-card ${item.active ? "" : "archived"}`}
+            key={catalogKey(item.type, item.variant)}
+            onClick={() => onCatalog(item)}
+          >
+            <div>
+              <h3>{itemLabel(item.type, item.variant, item.variantLabel)}</h3>
+              <p>כמותי</p>
+              <div className="inventory-numbers">
+                <span>
+                  מלאי <strong>{item.totalStock}</strong>
+                </span>
+                <span>
+                  מוחזק <strong>{issuedQuantity(item, data.holdings)}</strong>
+                </span>
+                <span>
+                  זמין <strong>{availableQuantity(item, data.holdings)}</strong>
+                </span>
+              </div>
+            </div>
+            {editable && (
+              <div
+                className="card-actions"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  className="small-button"
+                  onClick={() =>
+                    onAction({ kind: "quantity", item, mode: "issue" })
+                  }
+                >
+                  החתמה
+                </button>
+                <button
+                  className="small-button"
+                  onClick={() => onAction({ kind: "stock", item })}
+                >
+                  עדכון מלאי
+                </button>
+                <button
+                  className="small-button"
+                  onClick={() => onCatalogEdit(item)}
+                >
+                  עריכה
+                </button>
+                <button
+                  className="small-button danger-text"
+                  onClick={() => onCatalogToggle(item)}
+                >
+                  {item.active ? "הסר" : "הפעל"}
+                </button>
+              </div>
+            )}
+          </article>
+        ))}
+        {!numbered.length && !quantity.length && (
+          <EmptyList>לא נמצא ציוד.</EmptyList>
+        )}
+      </div>
+    </section>
+  );
 }
 
-function HistoryView({ data }: { data: CompanyData }) {
-  const [query, setQuery] = useState('');
-  const [action, setAction] = useState('');
-  const [type, setType] = useState('');
-  const [platoon, setPlatoon] = useState('');
-  const [status, setStatus] = useState('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
-  const actions = [...new Set(data.history.map((entry) => entry.action).filter(Boolean))];
-  const filtered = [...data.history].reverse().filter((entry) => {
-    const relatedSoldiers = data.soldiers.filter((soldier) => soldier.personalNumber === entry.previousSoldier || soldier.personalNumber === entry.newSoldier);
+function HistoryView({
+  data,
+  onSignature,
+}: {
+  data: CompanyData;
+  onSignature: (signature: SignatureSummary) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [method, setMethod] = useState("");
+  const [action, setAction] = useState("");
+  const [type, setType] = useState("");
+  const [platoon, setPlatoon] = useState("");
+  const [actor, setActor] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const rows = [...data.movements].reverse().filter((entry) => {
+    const relatedSoldiers = data.soldiers.filter(
+      (soldier) =>
+        soldier.personalNumber === entry.previousSoldier ||
+        soldier.personalNumber === entry.newSoldier,
+    );
     const timestamp = new Date(entry.timestamp).getTime();
-    const afterStart = !fromDate || (!Number.isNaN(timestamp) && timestamp >= new Date(`${fromDate}T00:00:00`).getTime());
-    const beforeEnd = !toDate || (!Number.isNaN(timestamp) && timestamp <= new Date(`${toDate}T23:59:59`).getTime());
-    return (!action || entry.action === action)
-      && (!type || entry.type === type)
-      && (!platoon || relatedSoldiers.some((soldier) => soldier.platoon === platoon))
-      && (!status || entry.note.includes(status) || (status === 'משויך' && ['שיוך', 'העברה'].includes(entry.action)) || (status === 'זמין' && entry.action === 'החזרה'))
-      && afterStart
-      && beforeEnd
-      && historySearchText(data, entry).includes(query.trim());
+    const searchable = `${entry.action} ${entry.type} ${entry.variant} ${entry.number} ${entry.previousSoldier} ${entry.newSoldier} ${entry.actor} ${entry.note} ${relatedSoldiers.map((soldier) => soldier.name).join(" ")}`;
+    return (
+      (!method || entry.method === method) &&
+      (!action || entry.action === action) &&
+      (!type || entry.type === type) &&
+      (!actor || entry.actor === actor) &&
+      (!platoon ||
+        relatedSoldiers.some((soldier) => soldier.platoon === platoon)) &&
+      (!fromDate || timestamp >= new Date(`${fromDate}T00:00:00`).getTime()) &&
+      (!toDate || timestamp <= new Date(`${toDate}T23:59:59`).getTime()) &&
+      (!query || searchable.includes(query.trim()))
+    );
   });
-  return <div className="page"><div className="page-heading"><div><h2>היסטוריה</h2><p>{filtered.length} פעולות</p></div></div><div className="filters history-filters"><input placeholder="חיפוש חייל, צל״ם, משתמש או הערה" value={query} onChange={(e) => setQuery(e.target.value)} /><select value={action} onChange={(e) => setAction(e.target.value)}><option value="">כל הפעולות</option>{actions.map((value) => <option key={value}>{value}</option>)}</select><select value={type} onChange={(e) => setType(e.target.value)}><option value="">כל הסוגים</option>{data.settings.equipmentTypes.map((value) => <option key={value}>{value}</option>)}</select><select value={platoon} onChange={(e) => setPlatoon(e.target.value)}><option value="">כל המחלקות</option>{data.settings.platoons.map((value) => <option key={value}>{value}</option>)}</select><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">כל הסטטוסים</option>{EQUIPMENT_STATUSES.map((value) => <option key={value}>{value}</option>)}</select><Field label="מתאריך"><input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></Field><Field label="עד תאריך"><input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></Field></div>{filtered.length ? <HistoryList data={data} entries={filtered} /> : <EmptyList>לא נמצאה פעילות התואמת לסינון.</EmptyList>}</div>;
+  type SigningHistoryGroup = {
+    kind: "signing";
+    signature: SignatureSummary;
+    entries: MovementEntry[];
+  };
+  const displayRows: Array<
+    { kind: "movement"; entry: MovementEntry } | SigningHistoryGroup
+  > = [];
+  const signingGroups = new Map<number, SigningHistoryGroup>();
+  rows.forEach((entry) => {
+    const signature = signatureForMovement(entry, data.signatures);
+    if (!signature) {
+      displayRows.push({ kind: "movement", entry });
+      return;
+    }
+    const existing = signingGroups.get(signature.row);
+    if (existing) {
+      existing.entries.push(entry);
+      return;
+    }
+    const group: SigningHistoryGroup = {
+      kind: "signing",
+      signature,
+      entries: [entry],
+    };
+    signingGroups.set(signature.row, group);
+    displayRows.push(group);
+  });
+  return (
+    <section>
+      <div className="page-heading">
+        <div>
+          <h1>תנועות</h1>
+          <p>היסטוריה מלאה; המצב הנוכחי נשמר בטבלאות המלאי</p>
+        </div>
+      </div>
+      <div className="filters">
+        <input
+          placeholder="חיפוש בתנועות"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <select
+          value={method}
+          onChange={(event) => setMethod(event.target.value)}
+        >
+          <option value="">כל שיטות הניהול</option>
+          {MANAGEMENT_METHODS.map((value) => (
+            <option key={value}>{value}</option>
+          ))}
+        </select>
+        <select
+          value={action}
+          onChange={(event) => setAction(event.target.value)}
+        >
+          <option value="">כל הפעולות</option>
+          {[...new Set(data.movements.map((entry) => entry.action))]
+            .filter(Boolean)
+            .map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+        </select>
+        <select value={type} onChange={(event) => setType(event.target.value)}>
+          <option value="">כל סוגי הציוד</option>
+          {[...new Set(data.movements.map((entry) => entry.type))]
+            .filter(Boolean)
+            .map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+        </select>
+        <select
+          value={platoon}
+          onChange={(event) => setPlatoon(event.target.value)}
+        >
+          <option value="">כל המחלקות</option>
+          {data.settings.platoons.map((value) => (
+            <option key={value}>{value}</option>
+          ))}
+        </select>
+        <select
+          value={actor}
+          onChange={(event) => setActor(event.target.value)}
+        >
+          <option value="">כל מבצעי הפעולה</option>
+          {[...new Set(data.movements.map((entry) => entry.actor))]
+            .filter(Boolean)
+            .map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+        </select>
+        <Field label="מתאריך">
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(event) => setFromDate(event.target.value)}
+          />
+        </Field>
+        <Field label="עד תאריך">
+          <input
+            type="date"
+            value={toDate}
+            onChange={(event) => setToDate(event.target.value)}
+          />
+        </Field>
+      </div>
+      <div className="history-list">
+        {displayRows.map((row) => {
+          if (row.kind === "signing")
+            return (
+              <article
+                className="signing-history-card"
+                key={`signature-${row.signature.row}`}
+              >
+                <div className="history-card-heading">
+                  <div>
+                    <strong>פעולת החתמה · {row.signature.soldierName}</strong>
+                    <small>
+                      {displayDate(row.signature.timestamp)} ·{" "}
+                      {row.signature.actor}
+                    </small>
+                  </div>
+                  <button
+                    type="button"
+                    className="small-button"
+                    onClick={() => onSignature(row.signature)}
+                  >
+                    הצגת חתימה
+                  </button>
+                </div>
+                <div className="session-change-list">
+                  {row.entries.map((entry) => (
+                    <span key={entry.row}>
+                      {entry.action} · {itemLabel(entry.type, entry.variant)}{" "}
+                      {entry.number && `· ${entry.number}`} {" "}
+                      {entry.quantity > 0 && `· כמות ${entry.quantity}`}
+                    </span>
+                  ))}
+                </div>
+              </article>
+            );
+          const { entry } = row;
+          return (
+            <article key={entry.row}>
+              <div>
+                <strong>{entry.action}</strong>
+                <span>
+                  {itemLabel(entry.type, entry.variant)}{" "}
+                  {entry.number && `· ${entry.number}`} {" "}
+                  {entry.quantity > 0 && `· כמות ${entry.quantity}`}
+                </span>
+              </div>
+              <p>
+                {entry.previousSoldier && `מ־${entry.previousSoldier}`} {" "}
+                {entry.newSoldier && `ל־${entry.newSoldier}`} {" "}
+                {entry.note && `· ${entry.note}`}
+              </p>
+              <small>
+                {displayDate(entry.timestamp)} · {entry.actor}
+              </small>
+            </article>
+          );
+        })}
+        {!displayRows.length && <EmptyList>לא נמצאו תנועות.</EmptyList>}
+      </div>
+    </section>
+  );
 }
 
-function historySearchText(data: CompanyData, entry: HistoryEntry): string {
-  return `${entry.action} ${entry.type} ${entry.number} ${entry.previousSoldier} ${entry.newSoldier} ${soldierName(data, entry.previousSoldier)} ${soldierName(data, entry.newSoldier)} ${entry.actor} ${entry.note}`;
+function SettingsView({
+  data,
+  editable,
+  onSave,
+  onAddCatalog,
+  onEditCatalog,
+}: {
+  data: CompanyData;
+  editable: boolean;
+  onSave: (values: string[]) => void;
+  onAddCatalog: () => void;
+  onEditCatalog: (item: CatalogItem) => void;
+}) {
+  const [text, setText] = useState(data.settings.platoons.join("\n"));
+  return (
+    <section>
+      <div className="page-heading">
+        <div>
+          <h1>הגדרות</h1>
+          <p>קטלוג ציוד ומחלקות</p>
+        </div>
+        {editable && (
+          <button className="primary-button" onClick={onAddCatalog}>
+            סוג ציוד חדש
+          </button>
+        )}
+      </div>
+      <section className="panel">
+        <h2>מחלקות</h2>
+        <Field label="מחלקה בכל שורה">
+          <textarea
+            rows={6}
+            value={text}
+            disabled={!editable}
+            onChange={(event) => setText(event.target.value)}
+          />
+        </Field>
+        {editable && (
+          <button
+            className="primary-button"
+            onClick={() => onSave(text.split("\n"))}
+          >
+            שמירת מחלקות
+          </button>
+        )}
+      </section>
+      <section className="panel">
+        <h2>קטלוג</h2>
+        <div className="cards-list compact">
+          {data.catalog.map((item) => (
+            <article
+              className={`list-card ${item.active ? "" : "archived"}`}
+              key={catalogKey(item.type, item.variant)}
+            >
+              <div>
+                <h3>{itemLabel(item.type, item.variant, item.variantLabel)}</h3>
+                <p>{item.method}</p>
+              </div>
+              {editable && (
+                <button
+                  className="small-button"
+                  onClick={() => onEditCatalog(item)}
+                >
+                  עריכה
+                </button>
+              )}
+            </article>
+          ))}
+        </div>
+      </section>
+    </section>
+  );
 }
 
-function HistoryList({ data, entries }: { data: CompanyData; entries: HistoryEntry[] }) {
-  return <div className="timeline">{entries.map((entry) => <article key={`${entry.row}-${entry.timestamp}`}><div className="timeline-dot" /><div><div className="timeline-top"><strong>{entry.action}</strong><time>{displayDate(entry.timestamp)}</time></div>{entry.type && <p>{entry.type} <bdi>{entry.number}</bdi></p>}{(entry.previousSoldier || entry.newSoldier) && <p>{entry.previousSoldier ? soldierName(data, entry.previousSoldier) : 'ללא שיוך'} {entry.newSoldier && <>← {soldierName(data, entry.newSoldier)}</>}</p>}{entry.note && <p className="muted">{entry.note}</p>}<small>{entry.actor || 'משתמש לא ידוע'}</small></div></article>)}</div>;
+function SoldierFormModal({
+  data,
+  soldier,
+  saving,
+  onClose,
+  onSave,
+}: {
+  data: CompanyData;
+  soldier?: Soldier;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (input: SoldierInput) => void;
+}) {
+  const [name, setName] = useState(soldier?.name || "");
+  const [personalNumber, setPersonalNumber] = useState(
+    soldier?.personalNumber || "",
+  );
+  const [platoon, setPlatoon] = useState(soldier?.platoon || "");
+  const [phone, setPhone] = useState(soldier?.phone || "");
+  return (
+    <Modal title={soldier ? "עריכת חייל" : "הוספת חייל"} onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave({ name, personalNumber, platoon, phone });
+        }}
+      >
+        <Field label="שם">
+          <input
+            required
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+        <Field label="מספר אישי">
+          <input
+            required
+            dir="ltr"
+            disabled={Boolean(soldier)}
+            value={personalNumber}
+            onChange={(event) => setPersonalNumber(event.target.value)}
+          />
+        </Field>
+        <Field label="מחלקה">
+          <select
+            required
+            value={platoon}
+            onChange={(event) => setPlatoon(event.target.value)}
+          >
+            <option value="">בחירה</option>
+            {data.settings.platoons.map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="טלפון (אופציונלי)">
+          <input
+            type="tel"
+            dir="ltr"
+            inputMode="tel"
+            placeholder="למשל 050-1234567"
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+          />
+        </Field>
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            ביטול
+          </button>
+          <button className="primary-button" disabled={saving}>
+            שמירה
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
 }
 
-function SettingsView({ data, saving, onSave }: { data: CompanyData; saving: boolean; onSave: (settings: CompanyData['settings'], action: string, note: string) => Promise<unknown> }) {
-  const [newType, setNewType] = useState('');
-  const [newPlatoon, setNewPlatoon] = useState('');
-  const readOnly = data.meta.isReadOnly;
-  async function add(kind: 'type' | 'platoon') {
-    const value = (kind === 'type' ? newType : newPlatoon).trim();
-    if (!value) return;
-    const list = kind === 'type' ? data.settings.equipmentTypes : data.settings.platoons;
-    if (list.includes(value)) return;
-    await onSave({ equipmentTypes: kind === 'type' ? [...list, value] : data.settings.equipmentTypes, platoons: kind === 'platoon' ? [...list, value] : data.settings.platoons }, kind === 'type' ? 'הוספת סוג צל״ם' : 'הוספת מחלקה', value);
-    kind === 'type' ? setNewType('') : setNewPlatoon('');
+function CatalogFormModal({
+  data,
+  item,
+  saving,
+  onClose,
+  onSave,
+}: {
+  data: CompanyData;
+  item?: CatalogItem;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (input: CatalogInput) => void;
+}) {
+  const [type, setType] = useState(item?.type || "");
+  const [variant, setVariant] = useState(item?.variant || "");
+  const [variantLabel, setVariantLabel] = useState(item?.variantLabel || "");
+  const [method, setMethod] = useState(item?.method || "צל״מ");
+  const [stock, setStock] = useState(String(item?.totalStock || 0));
+  const [note, setNote] = useState(item?.note || "");
+  return (
+    <Modal title={item ? "עריכת סוג ציוד" : "סוג ציוד חדש"} onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave({
+            type,
+            variant,
+            variantLabel,
+            method,
+            totalStock: Number(stock),
+            note,
+          });
+        }}
+      >
+        <Field label="סוג">
+          <input
+            required
+            disabled={Boolean(item)}
+            value={type}
+            onChange={(event) => setType(event.target.value)}
+          />
+        </Field>
+        <Field label="שם מאפיין (אופציונלי)">
+          <input
+            placeholder="למשל מידה או דגם"
+            value={variantLabel}
+            onChange={(event) => setVariantLabel(event.target.value)}
+          />
+        </Field>
+        <Field label="ערך מאפיין (אופציונלי)">
+          <input
+            disabled={Boolean(item)}
+            placeholder="למשל M או 42"
+            value={variant}
+            onChange={(event) => setVariant(event.target.value)}
+          />
+        </Field>
+        <p className="form-hint">
+          אם לסוג הציוד אין מידה, דגם או פרט נוסף — משאירים את שני השדות ריקים.
+        </p>
+        <Field label="שיטת ניהול">
+          <select
+            disabled={Boolean(item)}
+            value={method}
+            onChange={(event) =>
+              setMethod(event.target.value as "צל״מ" | "כמותי")
+            }
+          >
+            <option>צל״מ</option>
+            <option>כמותי</option>
+          </select>
+        </Field>
+        {method === "כמותי" && (
+          <Field label="מלאי התחלתי">
+            <input
+              type="number"
+              min="0"
+              step="1"
+              disabled={Boolean(item)}
+              value={stock}
+              onChange={(event) => setStock(event.target.value)}
+            />
+          </Field>
+        )}
+        <Field label="הערה">
+          <textarea
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </Field>
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            ביטול
+          </button>
+          <button className="primary-button" disabled={saving}>
+            שמירה
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function NumberedFormModal({
+  data,
+  item,
+  saving,
+  onClose,
+  onSave,
+}: {
+  data: CompanyData;
+  item?: NumberedItem;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (type: string, variant: string, number: string, note: string) => void;
+}) {
+  const options = data.catalog.filter(
+    (candidate) => candidate.active && candidate.method === "צל״מ",
+  );
+  const [key, setKey] = useState(
+    item ? catalogKey(item.type, item.variant) : "",
+  );
+  const [number, setNumber] = useState(item?.number || "");
+  const [note, setNote] = useState(item?.note || "");
+  return (
+    <Modal title={item ? "עריכת פריט צל״מ" : "פריט צל״מ חדש"} onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          const selected = options.find(
+            (candidate) =>
+              catalogKey(candidate.type, candidate.variant) === key,
+          );
+          if (selected) onSave(selected.type, selected.variant, number, note);
+        }}
+      >
+        <Field label="סוג ופרט נוסף">
+          <select
+            required
+            disabled={Boolean(item)}
+            value={key}
+            onChange={(event) => setKey(event.target.value)}
+          >
+            <option value="">בחירה</option>
+            {options.map((option) => (
+              <option
+                key={catalogKey(option.type, option.variant)}
+                value={catalogKey(option.type, option.variant)}
+              >
+                {itemLabel(option.type, option.variant, option.variantLabel)}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="מספר מזהה">
+          <input
+            required
+            dir="ltr"
+            disabled={Boolean(item)}
+            value={number}
+            onChange={(event) => setNumber(event.target.value)}
+          />
+        </Field>
+        <Field label="הערה">
+          <textarea
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </Field>
+        {!options.length && (
+          <p className="form-error">יש ליצור קודם סוג צל״מ בקטלוג.</p>
+        )}
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            ביטול
+          </button>
+          <button
+            className="primary-button"
+            disabled={saving || !options.length}
+          >
+            שמירה
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ActionModal({
+  data,
+  action,
+  saving,
+  onClose,
+  onSubmit,
+}: {
+  data: CompanyData;
+  action: Exclude<Action, null>;
+  saving: boolean;
+  onClose: () => void;
+  onSubmit: (values: {
+    soldier: string;
+    target: string;
+    quantity: string;
+    status: string;
+    note: string;
+  }) => void;
+}) {
+  const activeSoldiers = data.soldiers.filter((soldier) => soldier.active);
+  const [soldier, setSoldier] = useState("");
+  const [target, setTarget] = useState("");
+  const [quantity, setQuantity] = useState(
+    action.kind === "stock" ? String(action.item.totalStock) : "1",
+  );
+  const [status, setStatus] = useState(
+    action.kind === "numbered" ? action.item.status : "",
+  );
+  const [note, setNote] = useState("");
+  const needsSoldier =
+    (action.kind === "numbered" && action.mode === "assign") ||
+    (action.kind === "quantity" && action.mode === "issue" && !action.soldier);
+  const title =
+    action.kind === "stock"
+      ? "עדכון מלאי כולל"
+      : action.mode === "assign" || action.mode === "issue"
+        ? "החתמת ציוד"
+        : action.mode === "transfer"
+          ? "העברת ציוד"
+          : action.mode === "status"
+            ? "שינוי סטטוס"
+            : "החזרת ציוד";
+  return (
+    <Modal title={title} onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit({ soldier, target, quantity, status, note });
+        }}
+      >
+        {needsSoldier && (
+          <Field label="חייל">
+            <select
+              required
+              value={soldier}
+              onChange={(event) => setSoldier(event.target.value)}
+            >
+              <option value="">בחירה</option>
+              {activeSoldiers
+                .filter(
+                  (candidate) =>
+                    action.kind !== "numbered" ||
+                    candidate.personalNumber !== action.item.assignedTo,
+                )
+                .map((candidate) => (
+                  <option
+                    key={candidate.personalNumber}
+                    value={candidate.personalNumber}
+                  >
+                    {candidate.name} · {candidate.personalNumber}
+                  </option>
+                ))}
+            </select>
+          </Field>
+        )}
+        {action.kind === "quantity" && action.mode === "transfer" && (
+          <Field label="העברה אל">
+            <select
+              required
+              value={target}
+              onChange={(event) => setTarget(event.target.value)}
+            >
+              <option value="">בחירה</option>
+              {activeSoldiers
+                .filter(
+                  (candidate) =>
+                    candidate.personalNumber !== action.soldier?.personalNumber,
+                )
+                .map((candidate) => (
+                  <option
+                    key={candidate.personalNumber}
+                    value={candidate.personalNumber}
+                  >
+                    {candidate.name} · {candidate.personalNumber}
+                  </option>
+                ))}
+            </select>
+          </Field>
+        )}
+        {action.kind === "quantity" && (
+          <Field label="כמות">
+            <input
+              type="number"
+              required
+              min="1"
+              step="1"
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value)}
+            />
+          </Field>
+        )}
+        {action.kind === "stock" && (
+          <Field label="מלאי כולל חדש">
+            <input
+              type="number"
+              required
+              min="0"
+              step="1"
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value)}
+            />
+          </Field>
+        )}
+        {action.kind === "numbered" && action.mode === "status" && (
+          <Field label="סטטוס">
+            <select
+              value={status}
+              onChange={(event) => setStatus(event.target.value)}
+            >
+              {EQUIPMENT_STATUSES.filter(
+                (value) => !action.item.assignedTo || value === "משויך",
+              ).map((value) => (
+                <option key={value}>{value}</option>
+              ))}
+            </select>
+          </Field>
+        )}
+        <Field label="הערה">
+          <textarea
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </Field>
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            ביטול
+          </button>
+          <button className="primary-button" disabled={saving}>
+            אישור
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function drawSignature(
+  canvas: HTMLCanvasElement,
+  strokes: SignaturePoint[][],
+) {
+  const rect = canvas.getBoundingClientRect();
+  const ratio = Math.max(1, window.devicePixelRatio || 1);
+  const width = Math.max(1, Math.round(rect.width * ratio));
+  const height = Math.max(1, Math.round(rect.height * ratio));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
   }
-  async function remove(kind: 'type' | 'platoon', value: string) {
-    const used = kind === 'type' ? data.equipment.some((item) => item.active && item.type === value) : data.soldiers.some((soldier) => soldier.active && soldier.platoon === value);
-    if (used) return;
-    if (!window.confirm(`להסיר את „${value}” מרשימת האפשרויות?`)) return;
-    await onSave({ equipmentTypes: kind === 'type' ? data.settings.equipmentTypes.filter((item) => item !== value) : data.settings.equipmentTypes, platoons: kind === 'platoon' ? data.settings.platoons.filter((item) => item !== value) : data.settings.platoons }, kind === 'type' ? 'הסרת סוג צל״ם' : 'הסרת מחלקה', value);
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, rect.width, rect.height);
+  context.strokeStyle = "#173b45";
+  context.fillStyle = "#173b45";
+  context.lineWidth = 2.4;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  strokes.forEach((stroke) => {
+    if (!stroke.length) return;
+    context.beginPath();
+    context.moveTo(stroke[0][0] * rect.width, stroke[0][1] * rect.height);
+    if (stroke.length === 1) {
+      context.arc(
+        stroke[0][0] * rect.width,
+        stroke[0][1] * rect.height,
+        1.2,
+        0,
+        Math.PI * 2,
+      );
+      context.fill();
+      return;
+    }
+    stroke.slice(1).forEach((point) =>
+      context.lineTo(point[0] * rect.width, point[1] * rect.height),
+    );
+    context.stroke();
+  });
+}
+
+function SignatureCanvas({
+  onChange,
+}: {
+  onChange: (signature: SignatureData) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const strokesRef = useRef<SignaturePoint[][]>([]);
+  const activePointerRef = useRef<number | null>(null);
+  const strokeStartRef = useRef(0);
+
+  const redraw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    drawSignature(canvas, strokesRef.current);
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const observer = new ResizeObserver(redraw);
+    observer.observe(canvas);
+    redraw();
+    return () => observer.disconnect();
+  }, [redraw]);
+
+  const pointFromEvent = (
+    event: ReactPointerEvent<HTMLCanvasElement>,
+  ): SignaturePoint => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const clamp = (value: number) => Math.min(1, Math.max(0, value));
+    return [
+      Number(clamp((event.clientX - rect.left) / rect.width).toFixed(4)),
+      Number(clamp((event.clientY - rect.top) / rect.height).toFixed(4)),
+      Math.max(0, Math.round(performance.now() - strokeStartRef.current)),
+    ];
+  };
+
+  const appendPoint = (
+    event: ReactPointerEvent<HTMLCanvasElement>,
+  ): void => {
+    const stroke = strokesRef.current.at(-1);
+    if (!stroke) return;
+    const total = strokesRef.current.reduce(
+      (count, current) => count + current.length,
+      0,
+    );
+    if (total >= MAX_SIGNATURE_POINTS) return;
+    const point = pointFromEvent(event);
+    const previous = stroke.at(-1);
+    if (
+      previous &&
+      Math.hypot(point[0] - previous[0], point[1] - previous[1]) < 0.002
+    )
+      return;
+    stroke.push(point);
+    redraw();
+  };
+
+  const finishStroke = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (activePointerRef.current !== event.pointerId) return;
+    appendPoint(event);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    activePointerRef.current = null;
+    onChange({
+      version: 1,
+      strokes: strokesRef.current.map((stroke) => [...stroke]),
+    });
+  };
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="signature-canvas"
+      aria-label="אזור חתימה באצבע"
+      onPointerDown={(event) => {
+        event.preventDefault();
+        if (activePointerRef.current !== null) return;
+        activePointerRef.current = event.pointerId;
+        strokeStartRef.current = performance.now();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        strokesRef.current.push([]);
+        appendPoint(event);
+      }}
+      onPointerMove={(event) => {
+        if (activePointerRef.current !== event.pointerId) return;
+        event.preventDefault();
+        appendPoint(event);
+      }}
+      onPointerUp={finishStroke}
+      onPointerCancel={finishStroke}
+    />
+  );
+}
+
+function SignatureModal({
+  soldier,
+  changeCount,
+  saving,
+  onClose,
+  onConfirm,
+}: {
+  soldier: Soldier;
+  changeCount: number;
+  saving: boolean;
+  onClose: () => void;
+  onConfirm: (signature: SignatureData) => Promise<void>;
+}) {
+  const [signature, setSignature] = useState<SignatureData | null>(null);
+  const [canvasKey, setCanvasKey] = useState(0);
+  const valid = signature !== null && isValidSignature(signature);
+  const guardedClose = () => {
+    if (!saving) onClose();
+  };
+
+  return (
+    <Modal title="חתימת החייל" onClose={guardedClose}>
+      <p className="signature-explanation">
+        {soldier.name}, מספר אישי <bdi>{soldier.personalNumber}</bdi>, מאשר/ת
+        את {changeCount} השינויים בהחתמה זו.
+      </p>
+      <p className="signature-instruction">יש לחתום באצבע בתוך המסגרת.</p>
+      <SignatureCanvas key={canvasKey} onChange={setSignature} />
+      <div className="signature-status" aria-live="polite">
+        {valid ? "החתימה נקלטה" : "נדרשת חתימה מלאה לפני השמירה"}
+      </div>
+      <div className="modal-actions signature-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={saving}
+          onClick={guardedClose}
+        >
+          ביטול
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={saving || !signature}
+          onClick={() => {
+            setSignature(null);
+            setCanvasKey((current) => current + 1);
+          }}
+        >
+          נקה חתימה
+        </button>
+        <button
+          type="button"
+          className="primary-button"
+          disabled={saving || !valid}
+          onClick={() => signature && void onConfirm(signature)}
+        >
+          {saving ? "שומר..." : "אישור ושמירת ההחתמה"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function SignaturePreview({ signature }: { signature: SignatureData }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const redraw = () => drawSignature(canvas, signature.strokes);
+    const observer = new ResizeObserver(redraw);
+    observer.observe(canvas);
+    redraw();
+    return () => observer.disconnect();
+  }, [signature]);
+  return (
+    <canvas
+      ref={canvasRef}
+      className="signature-canvas signature-preview"
+      role="img"
+      aria-label="חתימת החייל"
+    />
+  );
+}
+
+function SignatureViewerModal({
+  state,
+  onClose,
+  onRetry,
+}: {
+  state: SignatureViewerState;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <Modal title="פרטי החתימה" onClose={onClose}>
+      {state.loading && <div className="empty-list">טוען חתימה…</div>}
+      {state.error && (
+        <div className="signature-load-error">
+          <div className="alert error" role="alert">
+            {state.error}
+          </div>
+          <button type="button" className="secondary-button" onClick={onRetry}>
+            ניסיון נוסף
+          </button>
+        </div>
+      )}
+      {state.record && (
+        <>
+          <div className="signature-metadata">
+            <strong>{state.record.soldierName}</strong>
+            <span>
+              מספר אישי <bdi>{state.record.personalNumber}</bdi>
+            </span>
+            <span>{displayDate(state.record.timestamp)}</span>
+            <span>בוצע על ידי {state.record.actor || "לא צוין"}</span>
+          </div>
+          <SignaturePreview signature={state.record.signature} />
+          <h3>השינויים שאושרו</h3>
+          <div className="history-list signature-change-list">
+            {state.record.snapshot.changes.map((change, index) => (
+              <article key={`${change.type}-${change.number}-${index}`}>
+                <strong>{change.action}</strong>
+                <span>
+                  {itemLabel(change.type, change.variant)}{" "}
+                  {change.number && `· ${change.number}`} {" "}
+                  {change.quantity > 0 && `· כמות ${change.quantity}`}
+                </span>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
+      <div className="modal-actions">
+        <button type="button" className="secondary-button" onClick={onClose}>
+          סגירה
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function SigningReceiptModal({
+  receipt,
+  onClose,
+}: {
+  receipt: { soldier: Soldier; movements: MovementEntry[] };
+  onClose: () => void;
+}) {
+  const { soldier, movements } = receipt;
+  const message = buildSoldierMovementsWhatsAppMessage(
+    soldier,
+    movements,
+    "ההחתמה הנוכחית",
+  );
+  return (
+    <Modal title="ההחתמה נשמרה" onClose={onClose}>
+      <p>
+        כל השינויים נשמרו. ניתן לשלוח ל{soldier.name} אישור הכולל בדיוק את
+        הפריטים ששונו בפעולה הזאת.
+      </p>
+      <div className="history-list share-preview">
+        {movements.map((entry, index) => (
+          <article key={`${entry.timestamp}-${index}`}>
+            <strong>{entry.action}</strong>
+            <span>
+              {itemLabel(entry.type, entry.variant)} {entry.number}
+              {entry.quantity > 0 && ` · כמות ${entry.quantity}`}
+            </span>
+            <small>בוצע על ידי {entry.actor || "לא צוין"}</small>
+          </article>
+        ))}
+      </div>
+      <div className="modal-actions">
+        <button type="button" className="secondary-button" onClick={onClose}>
+          סגירה
+        </button>
+        <button
+          type="button"
+          className="primary-button whatsapp-send-button"
+          onClick={() => shareOnWhatsApp(message, soldier.phone)}
+        >
+          <img src={whatsappIconUrl} alt="" />
+          פתיחה ב-WhatsApp
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function MovementShareModal({
+  data,
+  soldier,
+  onClose,
+}: {
+  data: CompanyData;
+  soldier: Soldier;
+  onClose: () => void;
+}) {
+  const now = new Date();
+  const initialFrom = new Date(now.getTime() - 10 * 60 * 1000);
+  const toInputValue = (date: Date) => {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  };
+  const [from, setFrom] = useState(toInputValue(initialFrom));
+  const [to, setTo] = useState(toInputValue(now));
+  const [preset, setPreset] = useState<"10m" | "today" | "custom">("10m");
+  const fromTime = new Date(from).getTime();
+  const toTime = new Date(to).getTime();
+  const validRange = Number.isFinite(fromTime) && Number.isFinite(toTime);
+  const movements = data.movements
+    .filter((entry) => {
+      const timestamp = new Date(entry.timestamp).getTime();
+      return (
+        Boolean(entry.method) &&
+        (entry.previousSoldier === soldier.personalNumber ||
+          entry.newSoldier === soldier.personalNumber) &&
+        validRange &&
+        timestamp >= fromTime &&
+        timestamp <= toTime
+      );
+    })
+    .sort(
+      (left, right) =>
+        new Date(left.timestamp).getTime() -
+        new Date(right.timestamp).getTime(),
+    );
+  const rangeLabel = validRange
+    ? `${displayDate(new Date(from).toISOString())}–${displayDate(new Date(to).toISOString())}`
+    : "טווח לא תקין";
+
+  function selectLastTenMinutes() {
+    const end = new Date();
+    setPreset("10m");
+    setFrom(toInputValue(new Date(end.getTime() - 10 * 60 * 1000)));
+    setTo(toInputValue(end));
   }
-  return <div className="page"><div className="page-heading"><div><h2>הגדרות</h2><p>רשימות בחירה מנוהלות</p></div></div><div className="settings-grid"><section className="panel"><h3>סוגי צל״ם</h3><div className="inline-add"><input value={newType} onChange={(e) => setNewType(e.target.value)} placeholder="סוג חדש" disabled={readOnly} /><button onClick={() => add('type')} disabled={readOnly || saving}>הוספה</button></div><div className="tag-list">{data.settings.equipmentTypes.map((value) => { const used = data.equipment.some((item) => item.active && item.type === value); return <span key={value}>{value}<button title={used ? 'הסוג נמצא בשימוש' : 'הסרה'} disabled={readOnly || used || saving} onClick={() => remove('type', value)}>×</button></span>; })}</div></section><section className="panel"><h3>מחלקות</h3><div className="inline-add"><input value={newPlatoon} onChange={(e) => setNewPlatoon(e.target.value)} placeholder="מחלקה חדשה" disabled={readOnly} /><button onClick={() => add('platoon')} disabled={readOnly || saving}>הוספה</button></div><div className="tag-list">{data.settings.platoons.map((value) => { const used = data.soldiers.some((soldier) => soldier.active && soldier.platoon === value); return <span key={value}>{value}<button title={used ? 'המחלקה נמצאת בשימוש' : 'הסרה'} disabled={readOnly || used || saving} onClick={() => remove('platoon', value)}>×</button></span>; })}</div></section></div></div>;
+
+  function selectToday() {
+    const end = new Date();
+    const start = new Date(end);
+    start.setHours(0, 0, 0, 0);
+    setPreset("today");
+    setFrom(toInputValue(start));
+    setTo(toInputValue(end));
+  }
+
+  return (
+    <Modal title={`שיתוף תנועות — ${soldier.name}`} onClose={onClose}>
+      <p>
+        {soldier.phone
+          ? `ההודעה תיפתח מוכנה לשליחה למספר ${soldier.phone}.`
+          : "לא הוגדר טלפון לחייל. לאחר פתיחת WhatsApp יש לבחור איש קשר."}
+      </p>
+      <div className="range-presets" role="group" aria-label="בחירת טווח זמן">
+        <button
+          type="button"
+          className={preset === "10m" ? "primary-button" : "secondary-button"}
+          onClick={selectLastTenMinutes}
+        >
+          10 דקות אחרונות
+        </button>
+        <button
+          type="button"
+          className={preset === "today" ? "primary-button" : "secondary-button"}
+          onClick={selectToday}
+        >
+          היום
+        </button>
+        <button
+          type="button"
+          className={
+            preset === "custom" ? "primary-button" : "secondary-button"
+          }
+          onClick={() => setPreset("custom")}
+        >
+          טווח מותאם
+        </button>
+      </div>
+      <div className="date-range-fields">
+        <Field label="מתאריך ושעה">
+          <input
+            type="datetime-local"
+            value={from}
+            onChange={(event) => {
+              setPreset("custom");
+              setFrom(event.target.value);
+            }}
+          />
+        </Field>
+        <Field label="עד תאריך ושעה">
+          <input
+            type="datetime-local"
+            value={to}
+            onChange={(event) => {
+              setPreset("custom");
+              setTo(event.target.value);
+            }}
+          />
+        </Field>
+      </div>
+      <p className="movement-count">
+        {movements.length
+          ? `${movements.length} תנועות ייכללו בהודעה.`
+          : "לא נמצאו תנועות ציוד בטווח שנבחר."}
+      </p>
+      <div className="history-list share-preview">
+        {movements.map((entry) => (
+          <article key={entry.row}>
+            <strong>{entry.action}</strong>
+            <span>
+              {itemLabel(entry.type, entry.variant)} {entry.number}
+              {entry.quantity > 0 && ` · כמות ${entry.quantity}`}
+            </span>
+            <small>
+              {displayDate(entry.timestamp)} · בוצע על ידי{" "}
+              {entry.actor || "לא צוין"}
+            </small>
+          </article>
+        ))}
+      </div>
+      <div className="modal-actions">
+        <button type="button" className="secondary-button" onClick={onClose}>
+          ביטול
+        </button>
+        <button
+          type="button"
+          className="primary-button whatsapp-send-button"
+          disabled={!movements.length || !validRange || fromTime > toTime}
+          onClick={() =>
+            shareOnWhatsApp(
+              buildSoldierMovementsWhatsAppMessage(
+                soldier,
+                movements,
+                rangeLabel,
+              ),
+              soldier.phone,
+            )
+          }
+        >
+          <img src={whatsappIconUrl} alt="" />
+          פתיחה ב-WhatsApp
+        </button>
+      </div>
+    </Modal>
+  );
 }
 
-function SoldierFormModal({ data, soldier, saving, onClose, onSave }: { data: CompanyData; soldier?: Soldier; saving: boolean; onClose: () => void; onSave: (input: SoldierInput) => Promise<unknown> }) {
-  const [name, setName] = useState(soldier?.name || '');
-  const [personalNumber, setPersonalNumber] = useState(soldier?.personalNumber || '');
-  const [platoon, setPlatoon] = useState(soldier?.platoon || data.settings.platoons[0] || '');
-  const submit = (event: FormEvent) => { event.preventDefault(); void onSave({ name, personalNumber, platoon }); };
-  return <Modal title={soldier ? 'עריכת חייל' : 'הוספת חייל'} onClose={onClose}><form className="stack-form" onSubmit={submit}><Field label="שם מלא"><input value={name} onChange={(e) => setName(e.target.value)} required autoFocus /></Field><Field label="מספר אישי"><input dir="ltr" inputMode="numeric" value={personalNumber} onChange={(e) => setPersonalNumber(e.target.value)} required disabled={Boolean(soldier)} /></Field>{soldier && <p className="form-hint">המספר האישי משמש כמזהה קבוע ואינו ניתן לשינוי.</p>}<Field label="מחלקה"><select value={platoon} onChange={(e) => setPlatoon(e.target.value)} required><option value="" disabled>בחירת מחלקה</option>{data.settings.platoons.map((value) => <option key={value}>{value}</option>)}</select></Field>{!data.settings.platoons.length && <p className="form-hint warning-text">יש להוסיף מחלקה במסך ההגדרות תחילה.</p>}<div className="form-actions"><button className="ghost-button" type="button" onClick={onClose}>ביטול</button><button className="primary-button" disabled={saving || !data.settings.platoons.length}>שמירה</button></div></form></Modal>;
+function SoldierDetail({
+  data,
+  soldier,
+  editable,
+  onClose,
+  onNumbered,
+  onQuantity,
+  onShare,
+  onSignature,
+}: {
+  data: CompanyData;
+  soldier: Soldier;
+  editable: boolean;
+  onClose: () => void;
+  onNumbered: (
+    item: NumberedItem,
+    mode: "assign" | "return" | "status",
+  ) => void;
+  onQuantity: (item: CatalogItem, mode: "return" | "transfer") => void;
+  onShare: () => void;
+  onSignature: (signature: SignatureSummary) => void;
+}) {
+  const numbered = numberedItemsForSoldier(
+    data.numberedItems,
+    soldier.personalNumber,
+  );
+  const holdings = holdingsForSoldier(data.holdings, soldier.personalNumber);
+  const history = [...data.movements]
+    .reverse()
+    .filter(
+      (entry) =>
+        entry.previousSoldier === soldier.personalNumber ||
+        entry.newSoldier === soldier.personalNumber,
+    );
+  const signatures = [...data.signatures]
+    .reverse()
+    .filter(
+      (signature) => signature.personalNumber === soldier.personalNumber,
+    );
+  return (
+    <Modal title={soldier.name} onClose={onClose}>
+      <p>
+        מספר אישי <bdi>{soldier.personalNumber}</bdi> · מחלקה {soldier.platoon}
+        {soldier.phone && (
+          <>
+            {" "}
+            · טלפון <bdi>{soldier.phone}</bdi>
+          </>
+        )}
+      </p>
+      <button
+        className="icon-button share-button"
+        type="button"
+        title="שיתוף תנועות ב-WhatsApp"
+        aria-label={`שיתוף התנועות של ${soldier.name} ב-WhatsApp`}
+        onClick={onShare}
+      >
+        <img src={whatsappIconUrl} alt="" />
+      </button>
+      <h3>ציוד נוכחי</h3>
+      <div className="cards-list compact">
+        {numbered.map((item) => (
+          <article className="list-card" key={`${item.type}-${item.number}`}>
+            <div>
+              <strong>
+                {itemLabel(item.type, item.variant)} · {item.number}
+              </strong>
+            </div>
+            {editable && (
+              <div className="card-actions">
+                <button
+                  className="small-button"
+                  onClick={() => onNumbered(item, "return")}
+                >
+                  החזרה
+                </button>
+                <button
+                  className="small-button"
+                  onClick={() => onNumbered(item, "assign")}
+                >
+                  העברה
+                </button>
+              </div>
+            )}
+          </article>
+        ))}
+        {holdings.map((holding) => {
+          const item = data.catalog.find(
+            (candidate) =>
+              catalogKey(candidate.type, candidate.variant) ===
+              catalogKey(holding.type, holding.variant),
+          );
+          return (
+            item && (
+              <article
+                className="list-card"
+                key={catalogKey(holding.type, holding.variant)}
+              >
+                <div>
+                  <strong>
+                    {itemLabel(item.type, item.variant, item.variantLabel)}
+                  </strong>
+                  <p>{holding.quantity} יח׳</p>
+                </div>
+                {editable && (
+                  <div className="card-actions">
+                    <button
+                      className="small-button"
+                      onClick={() => onQuantity(item, "return")}
+                    >
+                      החזרה
+                    </button>
+                    <button
+                      className="small-button"
+                      onClick={() => onQuantity(item, "transfer")}
+                    >
+                      העברה
+                    </button>
+                  </div>
+                )}
+              </article>
+            )
+          );
+        })}
+        {!numbered.length && !holdings.length && (
+          <EmptyList>אין ציוד מוחזק.</EmptyList>
+        )}
+      </div>
+      <h3>חתימות</h3>
+      <div className="history-list signature-summary-list">
+        {signatures.map((signature) => (
+          <article key={signature.row}>
+            <div className="history-card-heading">
+              <div>
+                <strong>פעולת החתמה</strong>
+                <small>
+                  {displayDate(signature.timestamp)} · {signature.actor}
+                </small>
+              </div>
+              <button
+                type="button"
+                className="small-button"
+                onClick={() => onSignature(signature)}
+              >
+                הצגת חתימה
+              </button>
+            </div>
+          </article>
+        ))}
+        {!signatures.length && <EmptyList>אין חתימות לחייל.</EmptyList>}
+      </div>
+      <h3>היסטוריה</h3>
+      <div className="history-list">
+        {history.map((entry) => (
+          <article key={entry.row}>
+            <strong>{entry.action}</strong>
+            <span>
+              {itemLabel(entry.type, entry.variant)} {entry.number}
+              {entry.quantity > 0 && ` · כמות ${entry.quantity}`}
+            </span>
+            <small>{displayDate(entry.timestamp)}</small>
+          </article>
+        ))}
+        {!history.length && <EmptyList>אין היסטוריה לחייל.</EmptyList>}
+      </div>
+    </Modal>
+  );
 }
 
-function EquipmentFormModal({ data, item, saving, onClose, onSave }: { data: CompanyData; item?: Equipment; saving: boolean; onClose: () => void; onSave: (input: EquipmentInput) => Promise<unknown> }) {
-  const [type, setType] = useState(item?.type || data.settings.equipmentTypes[0] || '');
-  const [number, setNumber] = useState(item?.number || '');
-  const [note, setNote] = useState(item?.note || '');
-  const submit = (event: FormEvent) => { event.preventDefault(); void onSave({ type, number, note }); };
-  return <Modal title={item ? 'עריכת צל״ם' : 'הוספת צל״ם'} onClose={onClose}><form className="stack-form" onSubmit={submit}><Field label="סוג"><select value={type} onChange={(e) => setType(e.target.value)} required disabled={Boolean(item)}><option value="" disabled>בחירת סוג</option>{data.settings.equipmentTypes.map((value) => <option key={value}>{value}</option>)}</select></Field><Field label="מספר צ"><input dir="ltr" value={number} onChange={(e) => setNumber(e.target.value)} required autoFocus disabled={Boolean(item)} /></Field>{item && <p className="form-hint">סוג ומספר צ משמשים כמזהה קבוע ואינם ניתנים לשינוי.</p>}<Field label="הערה"><textarea value={note} onChange={(e) => setNote(e.target.value)} /></Field>{!data.settings.equipmentTypes.length && <p className="form-hint warning-text">יש להוסיף סוג צל״ם במסך ההגדרות תחילה.</p>}<div className="form-actions"><button className="ghost-button" type="button" onClick={onClose}>ביטול</button><button className="primary-button" disabled={saving || !data.settings.equipmentTypes.length}>שמירה</button></div></form></Modal>;
-}
-
-function AssignmentModal({ data, initialItem, saving, onClose, onSave }: { data: CompanyData; initialItem?: Equipment; saving: boolean; onClose: () => void; onSave: (item: Equipment, soldier: Soldier, note: string) => Promise<unknown> }) {
-  const candidates = data.equipment.filter((item) => item.active && (item.status === 'זמין' || item.status === 'משויך'));
-  const soldiers = data.soldiers.filter((soldier) => soldier.active);
-  const [itemRow, setItemRow] = useState(String(initialItem?.row || candidates[0]?.row || ''));
-  const [soldierRow, setSoldierRow] = useState(String(soldiers[0]?.row || ''));
-  const [note, setNote] = useState('');
-  const item = data.equipment.find((candidate) => candidate.row === Number(itemRow));
-  const soldier = data.soldiers.find((candidate) => candidate.row === Number(soldierRow));
-  const submit = (event: FormEvent) => { event.preventDefault(); if (!item || !soldier) return; if (item.assignedTo && !window.confirm(`הצל״ם משויך כעת ל${soldierName(data, item.assignedTo)}. להעביר אותו?`)) return; void onSave(item, soldier, note); };
-  return <Modal title={item?.assignedTo ? 'העברת צל״ם' : 'שיוך צל״ם'} onClose={onClose}><form className="stack-form" onSubmit={submit}><Field label="צל״ם"><select value={itemRow} onChange={(e) => setItemRow(e.target.value)} disabled={Boolean(initialItem)}>{candidates.map((candidate) => <option value={candidate.row} key={candidate.row}>{candidate.type} · {candidate.number}{candidate.assignedTo ? ` · אצל ${soldierName(data, candidate.assignedTo)}` : ''}</option>)}</select></Field><Field label="חייל"><select value={soldierRow} onChange={(e) => setSoldierRow(e.target.value)}>{soldiers.map((candidate) => <option value={candidate.row} key={candidate.row}>{candidate.name} · {candidate.personalNumber} · {candidate.platoon}</option>)}</select></Field><Field label="הערה (רשות)"><textarea value={note} onChange={(e) => setNote(e.target.value)} /></Field><div className="form-actions"><button className="ghost-button" type="button" onClick={onClose}>ביטול</button><button className="primary-button" disabled={saving || !item || !soldier}>אישור {item?.assignedTo ? 'העברה' : 'שיוך'}</button></div></form></Modal>;
-}
-
-function NoteModal({ title, prompt, confirmLabel, saving, onClose, onSave }: { title: string; prompt: string; confirmLabel: string; saving: boolean; onClose: () => void; onSave: (note: string) => Promise<unknown> }) {
-  const [note, setNote] = useState('');
-  return <Modal title={title} onClose={onClose}><form className="stack-form" onSubmit={(event) => { event.preventDefault(); if (window.confirm('לאשר את הפעולה?')) void onSave(note); }}><Field label={prompt}><textarea value={note} onChange={(e) => setNote(e.target.value)} autoFocus /></Field><div className="form-actions"><button className="ghost-button" type="button" onClick={onClose}>ביטול</button><button className="danger-button" disabled={saving}>{confirmLabel}</button></div></form></Modal>;
-}
-
-function StatusModal({ item, saving, onClose, onSave }: { item: Equipment; saving: boolean; onClose: () => void; onSave: (status: EquipmentStatus, note: string) => Promise<unknown> }) {
-  const statuses = EQUIPMENT_STATUSES.filter((status) => status !== 'משויך');
-  const [status, setStatus] = useState<EquipmentStatus>(item.assignedTo ? 'משויך' : item.status);
-  const [note, setNote] = useState('');
-  const required = ['אבוד', 'תקול', 'מושבת'].includes(status);
-  return <Modal title={`שינוי סטטוס · ${item.type} ${item.number}`} onClose={onClose}><form className="stack-form" onSubmit={(event) => { event.preventDefault(); if (window.confirm(`לשנות סטטוס ל„${status}”?`)) void onSave(status, note); }}><Field label="סטטוס"><select value={status} onChange={(e) => setStatus(e.target.value as EquipmentStatus)} disabled={Boolean(item.assignedTo)}>{item.assignedTo ? <option value="משויך">משויך</option> : statuses.map((value) => <option key={value}>{value}</option>)}</select></Field>{item.assignedTo && <p className="warning-text">יש להחזיר את הציוד לפני שינוי הסטטוס.</p>}<Field label={required ? 'הערה (חובה)' : 'הערה (רשות)'}><textarea value={note} onChange={(e) => setNote(e.target.value)} required={required} /></Field><div className="form-actions"><button className="ghost-button" type="button" onClick={onClose}>ביטול</button><button className="primary-button" disabled={saving || Boolean(item.assignedTo)}>שמירת סטטוס</button></div></form></Modal>;
-}
-
-function SoldierDetail({ data, soldier, readOnly, saving, onClose, onEdit, onArchive }: { data: CompanyData; soldier: Soldier; readOnly: boolean; saving: boolean; onClose: () => void; onEdit: () => void; onArchive: () => void }) {
-  const items = equipmentForSoldier(data, soldier.personalNumber);
-  const history = [...data.history].reverse().filter((entry) => entry.previousSoldier === soldier.personalNumber || entry.newSoldier === soldier.personalNumber);
-  return <Modal title={soldier.name} onClose={onClose}><div className="detail-meta"><span>מספר אישי <bdi>{soldier.personalNumber}</bdi></span><span>מחלקה {soldier.platoon}</span>{!soldier.active && <span className="status-pill neutral">הוסר</span>}</div><section className="detail-section"><h3>צל״ם נוכחי</h3>{items.length ? <div className="mini-list">{items.map((item) => <div key={item.row}><strong>{item.type} <bdi>{item.number}</bdi></strong><span className={`status-pill ${statusClass(item.status)}`}>{item.status}</span></div>)}</div> : <EmptyList>אין צל״ם משויך לחייל.</EmptyList>}</section><section className="detail-section"><h3>היסטוריה</h3>{history.length ? <HistoryList data={data} entries={history} /> : <EmptyList>אין פעילות מתועדת.</EmptyList>}</section>{!readOnly && <div className="form-actions sticky-actions"><button className="ghost-button" onClick={onEdit} disabled={saving}>עריכה</button><button className={`${soldier.active ? 'danger-ghost-button small-remove-button' : 'primary-button'}`} onClick={onArchive} disabled={saving}>{soldier.active ? 'הסרה' : 'הפעלה מחדש'}</button></div>}</Modal>;
-}
-
-function EquipmentDetail({ data, item, readOnly, saving, onClose, onEdit, onAssign, onReturn, onStatus, onArchive }: { data: CompanyData; item: Equipment; readOnly: boolean; saving: boolean; onClose: () => void; onEdit: () => void; onAssign: () => void; onReturn: () => void; onStatus: () => void; onArchive: () => void }) {
-  const history = [...data.history].reverse().filter((entry) => entry.type === item.type && entry.number === item.number);
-  return <Modal title={`${item.type} ${item.number}`} onClose={onClose}><div className="detail-meta"><span className={`status-pill ${statusClass(item.status)}`}>{item.status}</span><span>{item.assignedTo ? `אצל ${soldierName(data, item.assignedTo)}` : 'ללא חייל משויך'}</span>{!item.active && <span className="status-pill neutral">הוסר</span>}</div>{item.note && <p className="note-box">{item.note}</p>}<section className="detail-section"><h3>היסטוריה</h3>{history.length ? <HistoryList data={data} entries={history} /> : <EmptyList>אין פעילות מתועדת.</EmptyList>}</section>{!readOnly && <div className="detail-actions"><button className="ghost-button" onClick={onEdit} disabled={saving}>עריכה</button>{item.active && (item.assignedTo ? <><button className="secondary-button" onClick={onAssign} disabled={saving}>העברה</button><button className="danger-ghost-button" onClick={onReturn} disabled={saving}>החזרה</button></> : <button className="primary-button" onClick={onAssign} disabled={saving || item.status !== 'זמין'}>שיוך</button>)}{item.active && <button className="ghost-button" onClick={onStatus} disabled={saving}>שינוי סטטוס</button>}<button className={item.active ? 'danger-ghost-button' : 'primary-button'} onClick={onArchive} disabled={saving}>{item.active ? 'הסר' : 'הפעלה מחדש'}</button></div>}</Modal>;
+function CatalogDetail({
+  data,
+  item,
+  editable,
+  onClose,
+  onAction,
+}: {
+  data: CompanyData;
+  item: CatalogItem;
+  editable: boolean;
+  onClose: () => void;
+  onAction: (action: Action) => void;
+}) {
+  const holdings = data.holdings.filter(
+    (holding) =>
+      holding.type === item.type &&
+      holding.variant === item.variant &&
+      holding.quantity > 0,
+  );
+  const history = [...data.movements]
+    .reverse()
+    .filter(
+      (entry) =>
+        catalogKey(entry.type, entry.variant) ===
+        catalogKey(item.type, item.variant),
+    );
+  return (
+    <Modal
+      title={itemLabel(item.type, item.variant, item.variantLabel)}
+      onClose={onClose}
+    >
+      <div className="inventory-numbers">
+        <span>
+          מלאי <strong>{item.totalStock}</strong>
+        </span>
+        <span>
+          מוחזק <strong>{issuedQuantity(item, data.holdings)}</strong>
+        </span>
+        <span>
+          זמין <strong>{availableQuantity(item, data.holdings)}</strong>
+        </span>
+      </div>
+      {editable && (
+        <div className="quick-actions">
+          <button
+            className="primary-button"
+            onClick={() => onAction({ kind: "quantity", item, mode: "issue" })}
+          >
+            החתמה
+          </button>
+          <button
+            className="secondary-button"
+            onClick={() => onAction({ kind: "stock", item })}
+          >
+            עדכון מלאי
+          </button>
+        </div>
+      )}
+      <h3>מחזיקים</h3>
+      <div className="cards-list compact">
+        {holdings.map((holding) => {
+          const soldier = data.soldiers.find(
+            (candidate) => candidate.personalNumber === holding.personalNumber,
+          );
+          return (
+            <article className="list-card" key={holding.personalNumber}>
+              <div>
+                <strong>{soldier?.name || holding.personalNumber}</strong>
+                <p>
+                  {soldier?.platoon && `מחלקה ${soldier.platoon} · `}
+                  {holding.quantity} יח׳
+                </p>
+              </div>
+              {editable && soldier && (
+                <div className="card-actions">
+                  <button
+                    className="small-button"
+                    onClick={() =>
+                      onAction({
+                        kind: "quantity",
+                        item,
+                        mode: "return",
+                        soldier,
+                      })
+                    }
+                  >
+                    החזרה
+                  </button>
+                  <button
+                    className="small-button"
+                    onClick={() =>
+                      onAction({
+                        kind: "quantity",
+                        item,
+                        mode: "transfer",
+                        soldier,
+                      })
+                    }
+                  >
+                    העברה
+                  </button>
+                </div>
+              )}
+            </article>
+          );
+        })}
+        {!holdings.length && <EmptyList>אין החזקות פעילות.</EmptyList>}
+      </div>
+      <h3>היסטוריה</h3>
+      <div className="history-list">
+        {history.map((entry) => (
+          <article key={entry.row}>
+            <strong>{entry.action}</strong>
+            <span>
+              {entry.number && `${entry.number} · `}
+              {entry.quantity > 0 && `כמות ${entry.quantity}`}
+            </span>
+            <small>{displayDate(entry.timestamp)}</small>
+          </article>
+        ))}
+        {!history.length && <EmptyList>אין היסטוריה לסוג הציוד.</EmptyList>}
+      </div>
+    </Modal>
+  );
 }

@@ -1,5 +1,15 @@
-export const EQUIPMENT_STATUSES = ['זמין', 'משויך', 'תקול', 'אבוד', 'בתיקון', 'מושבת'] as const;
+export const EQUIPMENT_STATUSES = [
+  "זמין",
+  "משויך",
+  "תקול",
+  "אבוד",
+  "בתיקון",
+  "מושבת",
+] as const;
 export type EquipmentStatus = (typeof EQUIPMENT_STATUSES)[number];
+
+export const MANAGEMENT_METHODS = ["צל״מ", "כמותי"] as const;
+export type ManagementMethod = (typeof MANAGEMENT_METHODS)[number];
 
 export interface Soldier {
   row: number;
@@ -7,11 +17,24 @@ export interface Soldier {
   personalNumber: string;
   platoon: string;
   active: boolean;
+  phone: string;
 }
 
-export interface Equipment {
+export interface CatalogItem {
   row: number;
   type: string;
+  variant: string;
+  variantLabel: string;
+  method: ManagementMethod;
+  totalStock: number;
+  note: string;
+  active: boolean;
+}
+
+export interface NumberedItem {
+  row: number;
+  type: string;
+  variant: string;
   number: string;
   status: EquipmentStatus;
   assignedTo: string;
@@ -19,67 +42,160 @@ export interface Equipment {
   active: boolean;
 }
 
-export interface HistoryEntry {
+export interface QuantityHolding {
+  row: number;
+  personalNumber: string;
+  type: string;
+  variant: string;
+  quantity: number;
+}
+
+export interface MovementEntry {
   row: number;
   timestamp: string;
   action: string;
+  method: ManagementMethod | "";
   type: string;
+  variant: string;
   number: string;
+  quantity: number;
   previousSoldier: string;
   newSoldier: string;
   actor: string;
   note: string;
 }
 
+export type SignaturePoint = [x: number, y: number, elapsedMs: number];
+
+export interface SignatureData {
+  version: 1;
+  strokes: SignaturePoint[][];
+}
+
+export interface SigningSnapshotChange {
+  action: string;
+  method: ManagementMethod | "";
+  type: string;
+  variant: string;
+  number: string;
+  quantity: number;
+}
+
+export interface SigningSnapshot {
+  version: 1;
+  soldierPersonalNumber: string;
+  soldierName: string;
+  changes: SigningSnapshotChange[];
+}
+
+export interface SignatureSummary {
+  row: number;
+  timestamp: string;
+  personalNumber: string;
+  soldierName: string;
+  actor: string;
+  formatVersion: string;
+}
+
+export interface SignatureRecord extends SignatureSummary {
+  snapshot: SigningSnapshot;
+  signature: SignatureData;
+}
+
 export interface ManagedSettings {
-  equipmentTypes: string[];
   platoons: string[];
+  schemaVersion: string;
 }
 
 export interface SpreadsheetMeta {
   spreadsheetId: string;
   title: string;
+  editable: boolean;
   userEmail: string;
   userName: string;
-  isReadOnly: boolean;
-  sheetIds: Record<string, number>;
+  sheets: Array<{
+    id: number;
+    title: string;
+    rowCount: number;
+    columnCount: number;
+  }>;
 }
 
 export interface CompanyData {
   meta: SpreadsheetMeta;
   soldiers: Soldier[];
-  equipment: Equipment[];
-  history: HistoryEntry[];
+  catalog: CatalogItem[];
+  numberedItems: NumberedItem[];
+  holdings: QuantityHolding[];
+  movements: MovementEntry[];
+  signatures: SignatureSummary[];
   settings: ManagedSettings;
 }
 
-export interface CompatibilityIssue {
-  tab: string;
-  message: string;
+export interface AdditiveSchemaUpgrade {
+  missingSheets: string[];
+  missingColumns: Array<{
+    sheetTitle: string;
+    startColumn: number;
+    headers: string[];
+  }>;
+  settingsVersionRow: number;
 }
 
 export type LoadResult =
-  | { kind: 'ready'; data: CompanyData }
-  | { kind: 'empty'; meta: SpreadsheetMeta }
-  | { kind: 'incompatible'; meta: SpreadsheetMeta; issues: CompatibilityIssue[] };
+  | { kind: "ready"; data: CompanyData }
+  | { kind: "empty"; meta: SpreadsheetMeta }
+  | {
+      kind: "upgradeable";
+      meta: SpreadsheetMeta;
+      issues: string[];
+      upgrade: AdditiveSchemaUpgrade;
+    }
+  | { kind: "incompatible"; meta: SpreadsheetMeta; issues: string[] };
 
 export interface SoldierInput {
   name: string;
   personalNumber: string;
   platoon: string;
+  phone?: string;
+  active?: boolean;
 }
 
-export interface EquipmentInput {
+export interface CatalogInput {
   type: string;
-  number: string;
+  variant: string;
+  variantLabel: string;
+  method: ManagementMethod;
+  totalStock: number;
   note: string;
+  active?: boolean;
 }
 
-export interface HistoryDraft {
+export interface NumberedItemInput {
+  type: string;
+  variant: string;
+  number: string;
+  status: EquipmentStatus;
+  assignedTo?: string;
+  note: string;
+  active?: boolean;
+}
+
+export interface MovementDraft {
   action: string;
+  method?: ManagementMethod | "";
   type?: string;
+  variant?: string;
   number?: string;
+  quantity?: number;
   previousSoldier?: string;
   newSoldier?: string;
   note?: string;
+}
+
+export interface SigningSessionInput {
+  numberedToAssign: NumberedItem[];
+  numberedToReturn: NumberedItem[];
+  quantityTargets: Array<{ item: CatalogItem; quantity: number }>;
+  signature: SignatureData;
 }

@@ -1,6 +1,6 @@
-# צל״ם פלוגתי
+# ציוד פלוגתי
 
-אפליקציית RTL מותאמת למובייל לניהול ציוד לחימה פלוגתי באמצעות Google Sheets.
+אפליקציית RTL מותאמת למובייל לניהול צל״מ וציוד כמותי באמצעות Google Sheets.
 
 ## Local development
 
@@ -50,6 +50,14 @@ The OAuth client must allow the local and deployed web origins.
 
 ## Spreadsheet setup
 
-An editor opening a truly empty spreadsheet can explicitly choose **הכנת הגיליון לצל״ם פלוגתי**. The app creates the required `חיילים`, `צלם`, `שיוכים`, and `הגדרות` tabs.
+An editor opening a truly empty spreadsheet can explicitly choose **הכנת הגיליון לציוד פלוגתי**. The app creates the required `חיילים`, `קטלוג`, `פריטי צל״מ`, `החזקות כמותיות`, `תנועות`, `חתימות`, and `הגדרות` tabs.
 
-A non-empty incompatible spreadsheet is never changed automatically. The app lists its missing tabs or incorrect headers instead.
+The catalog defines whether each type is `צל״מ` or `כמותי`. It may also define an optional characteristic name and value—for example `מידה` + `M`; both remain empty when not relevant. All quantity values use the fixed display label `יח׳`. Current assignments are materialized in `פריטי צל״מ` and `החזקות כמותיות`; `תנועות` is an append-only audit trail and is not replayed to calculate current state.
+
+Soldier phone numbers are optional. From a soldier profile, recent equipment movements can be shared as a WhatsApp draft for the last 10 minutes, today, or a custom range. If a phone number is stored, the draft is addressed directly to it.
+
+The `החתמות` screen provides a single-session workflow: find a soldier with fuzzy search and edit their complete signed-equipment draft. `שמירת ההחתמה` opens a required touch-signature canvas; after the soldier signs, current-state changes, movement rows, the exact approved snapshot, and normalized signature strokes are saved together in one Sheets batch. A WhatsApp receipt for exactly that session is offered only after the save succeeds.
+
+Saved signatures can be viewed from the soldier profile and from grouped signing-operation cards in `תנועות`. Normal loading reads only the lightweight signature index; the snapshot and stroke JSON for a single row are fetched and validated only when `הצגת חתימה` is selected, then cached in memory.
+
+When a schema update only requires adding a missing required tab or required trailing columns, the app lists the exact additions and offers editors an explicit **השלמת מבנה הגיליון** action. Existing data is not moved or overwritten. Reordered, renamed, or conflicting headers remain incompatible and are never changed automatically.
