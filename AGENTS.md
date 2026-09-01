@@ -132,8 +132,10 @@ Keep the schema definition centralized in code. Reads and writes must target hea
 - Restrict both UI visibility and repository writes by the signed-in email's resolved permission.
 - Platoon-scoped users may see and operate only on soldiers, assignments, movements, and signatures belonging to their permitted platoons. Unassigned equipment remains visible when its management method is permitted so it can be issued.
 - Equipment scope is `צל״מ`, `כמותי`, or `הכל`; hide and block the other management method.
-- Only admins may access settings, manage permissions or platoons, manage catalog types, or adjust quantity stock.
-- A permitted non-admin may add, edit, remove/reactivate, assign, return, transfer, and change status for numbered `צל״מ` within scope.
+- Only admins may access settings and manage permissions or platoons.
+- A permitted non-admin with all-platoons access may create, edit, archive/reactivate, and manage stock for catalog types within their equipment scope.
+- A non-admin limited to named platoons may assign/return/transfer permitted equipment, manage soldiers in those platoons, and create new numbered `צל״מ` items from an existing catalog type. They may not create or edit catalog types, adjust stock, edit existing numbered items, or archive/reactivate catalog or numbered records.
+- A permitted non-admin with `צל״מ` access may add, edit, remove/reactivate, assign, return, transfer, and change status for numbered `צל״מ` within scope.
 - Re-resolve and enforce permissions immediately before every write. UI hiding is not sufficient authorization.
 - Never expose permission-management history to non-admin users.
 
@@ -183,6 +185,7 @@ For operations that update current state and append history, minimize partial wr
 - Provide a dedicated `החתמות` section with fuzzy soldier search across name, personal number, phone, and platoon.
 - After selecting a soldier, show the complete current signed-equipment state: every assigned `צל״מ` item and every positive quantity holding.
 - Treat edits as a local draft. Allow removing `צל״מ`, changing or zeroing quantities, and adding available `צל״מ` or quantity equipment.
+- Label equipment-addition actions `הוספה להחתמה` so they are not confused with creating inventory records.
 - Pressing `שמירת ההחתמה` opens a required finger-signature canvas and does not write yet. Allow clearing or cancelling the signature.
 - Save only after a meaningful signature is present. Save the complete draft as one atomic Sheets batch containing all current-state updates, matching movement rows, the exact operation snapshot, and the normalized signature strokes. Do not write each edit as it is made.
 - After a successful save, show a WhatsApp confirmation containing exactly the changes in that signing session and the action performer. Use the soldier's phone when present; otherwise open the contact picker.
@@ -210,6 +213,7 @@ Prominent actions:
 
 - List name, personal number, platoon, and a useful current-equipment summary.
 - Add, edit, archive, reactivate, search, and filter by platoon.
+- Label the soldier name field `שם מלא`. Personal numbers must contain ASCII digits only; keep them as text so leading zeroes are preserved.
 - Soldier profile shows all current equipment and complete history.
 - Soldier profile allows sharing equipment movements for a selected time range. Default to the last 10 minutes, with quick access to today and a custom range. When a phone is present, address the WhatsApp draft directly to it; otherwise open the contact picker. Include the soldier name and action performer for every movement.
 - Provide WhatsApp sharing for exactly the soldiers in the current filtered result. Group the message by platoon and list each soldier's currently assigned equipment.

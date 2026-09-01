@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canAccessMethod,
   canAccessPlatoon,
+  hasAllPlatoons,
   resolveUserAccess,
   scopeCompanyData,
   validatePermissionInputs,
@@ -34,7 +35,9 @@ describe("permissions", () => {
     expect(canAccessMethod(access, "כמותי")).toBe(false);
     expect(canAccessPlatoon(access, "1")).toBe(true);
     expect(canAccessPlatoon(access, "2")).toBe(false);
+    expect(hasAllPlatoons(access)).toBe(false);
     expect(canAccessMethod({ ...access, admin: true }, "כמותי")).toBe(true);
+    expect(hasAllPlatoons({ ...access, admin: true })).toBe(true);
   });
 
   it("validates unique emails, known platoons, and a remaining admin", () => {

@@ -49,6 +49,7 @@ import {
   canAccessMethod,
   canAccessPersonalNumber,
   canAccessSoldier,
+  hasAllPlatoons,
   normalizeEmail,
   resolveUserAccess,
   validatePermissionInputs,
@@ -386,7 +387,8 @@ export class SpreadsheetRepository {
 
   async addCatalogItem(data: CompanyData, input: CatalogInput): Promise<void> {
     this.ensureEditable(data);
-    this.ensureAdmin(data);
+    this.ensureMethodAccess(data, input.method);
+    this.ensureAllPlatoons(data);
     const errors = validateCatalogInput(input, data.catalog);
     if (errors.length) throw new Error(errors[0]);
     await this.batch([
@@ -409,7 +411,8 @@ export class SpreadsheetRepository {
   ): Promise<void> {
     item = this.currentCatalogItem(data, item);
     this.ensureEditable(data);
-    this.ensureAdmin(data);
+    this.ensureMethodAccess(data, item.method);
+    this.ensureAllPlatoons(data);
     if (
       catalogKey(input.type, input.variant) !==
         catalogKey(item.type, item.variant) ||
@@ -449,7 +452,8 @@ export class SpreadsheetRepository {
   ): Promise<void> {
     item = this.currentCatalogItem(data, item);
     this.ensureEditable(data);
-    this.ensureAdmin(data);
+    this.ensureMethodAccess(data, item.method);
+    this.ensureAllPlatoons(data);
     const issue = active
       ? null
       : canRemoveCatalogItem(item, data.numberedItems, data.holdings);
@@ -523,6 +527,7 @@ export class SpreadsheetRepository {
     item = this.currentNumberedItem(data, item);
     this.ensureEditable(data);
     this.ensureMethodAccess(data, "צל״מ");
+    this.ensureAllPlatoons(data);
     this.ensurePersonalNumberAccess(data, item.assignedTo);
     if (
       numberedItemKey(input.type, input.number) !==
@@ -566,6 +571,7 @@ export class SpreadsheetRepository {
     item = this.currentNumberedItem(data, item);
     this.ensureEditable(data);
     this.ensureMethodAccess(data, "צל״מ");
+    this.ensureAllPlatoons(data);
     this.ensurePersonalNumberAccess(data, item.assignedTo);
     const issue = active ? null : canRemoveNumberedItem(item);
     if (issue) throw new Error(issue);
@@ -854,7 +860,8 @@ export class SpreadsheetRepository {
   ): Promise<void> {
     item = this.currentCatalogItem(data, item);
     this.ensureEditable(data);
-    this.ensureAdmin(data);
+    this.ensureMethodAccess(data, "כמותי");
+    this.ensureAllPlatoons(data);
     if (
       item.method !== "כמותי" ||
       !Number.isInteger(totalStock) ||
@@ -1556,6 +1563,11 @@ export class SpreadsheetRepository {
   private ensureAdmin(data: CompanyData) {
     if (!this.access(data).admin)
       throw new Error("הפעולה זמינה למנהלים בלבד.");
+  }
+
+  private ensureAllPlatoons(data: CompanyData) {
+    if (!hasAllPlatoons(this.access(data)))
+      throw new Error("הפעולה אינה זמינה למשתמש המוגבל למחלקות מסוימות.");
   }
 
   private ensureMethodAccess(

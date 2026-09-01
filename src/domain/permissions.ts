@@ -52,6 +52,9 @@ export const canAccessPlatoon = (
 ): boolean =>
   access.admin || !access.platoons.length || access.platoons.includes(platoon);
 
+export const hasAllPlatoons = (access: UserAccess): boolean =>
+  access.admin || access.platoons.length === 0;
+
 export const canAccessSoldier = (
   access: UserAccess,
   soldier: Soldier,

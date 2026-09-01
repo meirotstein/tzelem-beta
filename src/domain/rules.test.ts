@@ -150,6 +150,43 @@ describe("domain invariants", () => {
     ).toContain("מספר הטלפון אינו תקין.");
   });
 
+  it("allows only digits in a soldier personal number", () => {
+    expect(
+      validateSoldierInput(
+        { name: "א", personalNumber: "12A-3", platoon: "א", phone: "" },
+        [],
+      ),
+    ).toContain("מספר אישי יכול להכיל ספרות בלבד.");
+    expect(
+      validateSoldierInput(
+        { name: "א", personalNumber: "00123", platoon: "א", phone: "" },
+        [],
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("rejects a personal number that already belongs to another soldier", () => {
+    const existingSoldier = {
+      row: 2,
+      name: "חייל קיים",
+      personalNumber: "00123",
+      platoon: "א",
+      active: true,
+      phone: "",
+    };
+    expect(
+      validateSoldierInput(
+        {
+          name: "חייל חדש",
+          personalNumber: existingSoldier.personalNumber,
+          platoon: "א",
+          phone: "",
+        },
+        [existingSoldier],
+      ),
+    ).toContain("כבר קיים חייל עם המספר האישי הזה.");
+  });
+
   it("requires an explanation for exceptional numbered statuses", () => {
     expect(validateStatusChange("תקול", "")).toContain(
       "חובה להוסיף הערה לסטטוס שנבחר.",

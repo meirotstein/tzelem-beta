@@ -22,6 +22,8 @@ export const validateSoldierInput = (
   const personalNumber = normalizeText(input.personalNumber);
   if (!normalizeText(input.name)) errors.push("יש להזין שם חייל.");
   if (!personalNumber) errors.push("יש להזין מספר אישי.");
+  else if (!/^\d+$/.test(personalNumber))
+    errors.push("מספר אישי יכול להכיל ספרות בלבד.");
   if (!normalizeText(input.platoon)) errors.push("יש לבחור מחלקה.");
   if (normalizeText(input.phone)) {
     const digits = normalizeText(input.phone).replace(/\D/g, "");
@@ -35,7 +37,7 @@ export const validateSoldierInput = (
         soldier.personalNumber !== originalPersonalNumber,
     )
   ) {
-    errors.push("המספר האישי כבר קיים.");
+    errors.push("כבר קיים חייל עם המספר האישי הזה.");
   }
   return errors;
 };

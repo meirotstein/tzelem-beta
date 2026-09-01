@@ -286,6 +286,20 @@ describe("repository permission enforcement", () => {
     };
   });
 
+  it("rejects a duplicate soldier personal number before writing", async () => {
+    const repository = new SpreadsheetRepository("sheet");
+
+    await expect(
+      repository.addSoldier(data, {
+        name: "חייל נוסף",
+        personalNumber: soldier.personalNumber,
+        platoon: soldier.platoon,
+        phone: "",
+      }),
+    ).rejects.toThrow("כבר קיים חייל עם המספר האישי הזה");
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
   it("blocks a scoped user from another platoon and management method", async () => {
     const repository = new SpreadsheetRepository("sheet");
     const otherSoldier = { ...soldier, row: 3, personalNumber: "7654321", platoon: "2" };
@@ -327,6 +341,203 @@ describe("repository permission enforcement", () => {
       repository.issueQuantity(scopedData, quantityItem, soldier, 1, ""),
     ).rejects.toThrow("סוג הציוד");
     expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it("limits platoon-scoped users to assignments, soldiers, and new numbered items", async () => {
+    const repository = new SpreadsheetRepository("sheet");
+    const quantityItem = {
+      row: 2,
+      type: "חולצה",
+      variant: "",
+      variantLabel: "",
+      method: "כמותי" as const,
+      totalStock: 10,
+      note: "",
+      active: true,
+    };
+    const numberedCatalog = {
+      row: 3,
+      type: "נשק",
+      variant: "",
+      variantLabel: "",
+      method: "צל״מ" as const,
+      totalStock: 0,
+      note: "",
+      active: true,
+    };
+    const scopedData: CompanyData = {
+      ...data,
+      catalog: [quantityItem, numberedCatalog],
+      permissions: [
+        {
+          row: 2,
+          email: "admin@example.com",
+          admin: false,
+          equipmentScope: "הכל",
+          platoons: ["1"],
+        },
+      ],
+    };
+
+    await expect(
+      repository.addCatalogItem(scopedData, {
+        type: "קסדה",
+        variant: "",
+        variantLabel: "",
+        method: "צל״מ",
+        totalStock: 0,
+        note: "",
+      }),
+    ).rejects.toThrow("מוגבל למחלקות");
+    await expect(
+      repository.editNumberedItem(scopedData, scopedData.numberedItems[0], {
+        type: "נשק",
+        variant: "",
+        number: "123",
+        status: "זמין",
+        note: "עריכה",
+      }),
+    ).rejects.toThrow("מוגבל למחלקות");
+    await expect(
+      repository.adjustStock(scopedData, quantityItem, 11, ""),
+    ).rejects.toThrow("מוגבל למחלקות");
+    await expect(
+      repository.setCatalogActive(scopedData, quantityItem, false),
+    ).rejects.toThrow("מוגבל למחלקות");
+
+    await repository.assignNumbered(
+      scopedData,
+      scopedData.numberedItems[0],
+      soldier,
+      "",
+    );
+    await repository.addNumberedItem(scopedData, {
+      type: "נשק",
+      variant: "",
+      number: "124",
+      status: "זמין",
+      note: "",
+    });
+
+    expect(batchUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows an all-platoons non-admin with numbered scope to add a catalog type", async () => {
+    const repository = new SpreadsheetRepository("sheet");
+    const scopedData: CompanyData = {
+      ...data,
+      permissions: [
+        {
+          row: 2,
+          email: "admin@example.com",
+          admin: false,
+          equipmentScope: "צל״מ",
+          platoons: [],
+        },
+      ],
+    };
+
+    await repository.addCatalogItem(scopedData, {
+      type: "קסדה",
+      variant: "",
+      variantLabel: "",
+      method: "צל״מ",
+      totalStock: 0,
+      note: "",
+    });
+
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a non-admin with quantity scope to add and edit a quantity type", async () => {
+    const repository = new SpreadsheetRepository("sheet");
+    const quantityItem = {
+      row: 2,
+      type: "חולצה",
+      variant: "",
+      variantLabel: "",
+      method: "כמותי" as const,
+      totalStock: 0,
+      note: "",
+      active: true,
+    };
+    const scopedData: CompanyData = {
+      ...data,
+      catalog: [quantityItem],
+      permissions: [
+        {
+          row: 2,
+          email: "admin@example.com",
+          admin: false,
+          equipmentScope: "הכל",
+          platoons: [],
+        },
+      ],
+    };
+
+    await repository.addCatalogItem(scopedData, {
+      type: "חגורה",
+      variant: "",
+      variantLabel: "",
+      method: "כמותי",
+      totalStock: 4,
+      note: "",
+    });
+    await repository.editCatalogItem(scopedData, quantityItem, {
+      type: quantityItem.type,
+      variant: quantityItem.variant,
+      variantLabel: quantityItem.variantLabel,
+      method: quantityItem.method,
+      totalStock: 5,
+      note: "עודכן",
+    });
+
+    expect(batchUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows a non-admin to manage quantity stock and catalog lifecycle", async () => {
+    const repository = new SpreadsheetRepository("sheet");
+    const quantityItem = {
+      row: 2,
+      type: "חולצה",
+      variant: "",
+      variantLabel: "",
+      method: "כמותי" as const,
+      totalStock: 10,
+      note: "",
+      active: true,
+    };
+    const scopedData: CompanyData = {
+      ...data,
+      catalog: [quantityItem],
+      permissions: [
+        {
+          row: 2,
+          email: "admin@example.com",
+          admin: false,
+          equipmentScope: "כמותי",
+          platoons: [],
+        },
+      ],
+    };
+
+    await repository.addCatalogItem(scopedData, {
+      type: "חגורה",
+      variant: "",
+      variantLabel: "",
+      method: "כמותי",
+      totalStock: 1,
+      note: "",
+    });
+    await repository.editCatalogItem(scopedData, quantityItem, {
+      ...quantityItem,
+      totalStock: 11,
+    });
+    await repository.adjustStock(scopedData, quantityItem, 12, "");
+    await repository.setCatalogActive(scopedData, quantityItem, false);
+    await repository.setCatalogActive(scopedData, quantityItem, true);
+
+    expect(batchUpdate).toHaveBeenCalledTimes(5);
   });
 
   it("allows an admin to save permission definitions", async () => {

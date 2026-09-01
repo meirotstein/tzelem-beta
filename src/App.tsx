@@ -19,9 +19,11 @@ import {
   numberedItemsForSoldier,
   soldierHasEquipment,
   soldiersWithoutEquipment,
+  validateSoldierInput,
 } from "./domain/rules";
 import {
   canAccessMethod,
+  hasAllPlatoons,
   resolveUserAccess,
   scopeCompanyData,
 } from "./domain/permissions";
@@ -42,6 +44,7 @@ import type {
   CompanyData,
   EquipmentStatus,
   LoadResult,
+  ManagementMethod,
   MovementEntry,
   NumberedItem,
   PermissionInput,
@@ -778,10 +781,17 @@ export function App() {
           }}
         />
       )}
-      {catalogForm && access.admin && (
+      {catalogForm &&
+        hasAllPlatoons(access) &&
+        (catalogForm === "new" ||
+          canAccessMethod(access, catalogForm.method)) && (
         <CatalogFormModal
           data={visibleData}
           item={catalogForm === "new" ? undefined : catalogForm}
+          allowedMethods={MANAGEMENT_METHODS.filter((method) =>
+            canAccessMethod(access, method),
+          )}
+          canManageStock={canAccessMethod(access, "כמותי")}
           saving={saving}
           onClose={() => setCatalogForm(null)}
           onSave={async (input) => {
@@ -796,7 +806,9 @@ export function App() {
           }}
         />
       )}
-      {numberedForm && canAccessMethod(access, "צל״מ") && (
+      {numberedForm &&
+        canAccessMethod(access, "צל״מ") &&
+        (numberedForm === "new" || hasAllPlatoons(access)) && (
         <NumberedFormModal
           data={operationData}
           item={numberedForm === "new" ? undefined : numberedForm}
@@ -982,7 +994,9 @@ export function App() {
           stockHoldings={data.holdings}
           item={catalogDetail}
           editable={data.meta.editable}
-          canManageStock={access.admin}
+          canManageStock={
+            canAccessMethod(access, "כמותי") && hasAllPlatoons(access)
+          }
           onClose={() => setCatalogDetail(null)}
           onAction={setAction}
         />
@@ -1645,7 +1659,7 @@ function SigningsView({
                   setNumberedToAdd("");
                 }}
               >
-                הוספה
+                הוספה להחתמה
               </button>
             </div>
             <div>
@@ -1700,7 +1714,7 @@ function SigningsView({
                   setAddQuantity(1);
                 }}
               >
-                הוספה
+                הוספה להחתמה
               </button>
             </div>
           </div>
@@ -1779,6 +1793,7 @@ function InventoryView({
   const [status, setStatus] = useState("");
   const [platoon, setPlatoon] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const canManageInventory = hasAllPlatoons(access);
   const holderMatches = (personalNumber: string) =>
     !platoon ||
     data.soldiers.find((soldier) => soldier.personalNumber === personalNumber)
@@ -1839,7 +1854,7 @@ function InventoryView({
           </button>
           {editable && (
             <>
-              {access.admin && (
+              {canManageInventory && (
                 <button className="secondary-button" onClick={onAddCatalog}>
                   סוג ציוד חדש
                 </button>
@@ -1955,18 +1970,22 @@ function InventoryView({
                   >
                     סטטוס
                   </button>
-                  <button
-                    className="small-button"
-                    onClick={() => onNumberedEdit(item)}
-                  >
-                    עריכה
-                  </button>
-                  <button
-                    className="small-button danger-text"
-                    onClick={() => onNumberedToggle(item)}
-                  >
-                    {item.active ? "הסר" : "הפעל"}
-                  </button>
+                  {canManageInventory && (
+                    <>
+                      <button
+                        className="small-button"
+                        onClick={() => onNumberedEdit(item)}
+                      >
+                        עריכה
+                      </button>
+                      <button
+                        className="small-button danger-text"
+                        onClick={() => onNumberedToggle(item)}
+                      >
+                        {item.active ? "הסר" : "הפעל"}
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </article>
@@ -2006,7 +2025,7 @@ function InventoryView({
                 >
                   החתמה
                 </button>
-                {access.admin && (
+                {canManageInventory && (
                   <>
                     <button
                       className="small-button"
@@ -2506,15 +2525,27 @@ function SoldierFormModal({
   );
   const [platoon, setPlatoon] = useState(soldier?.platoon || "");
   const [phone, setPhone] = useState(soldier?.phone || "");
+  const [formError, setFormError] = useState("");
   return (
     <Modal title={soldier ? "עריכת חייל" : "הוספת חייל"} onClose={onClose}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          onSave({ name, personalNumber, platoon, phone });
+          const input = { name, personalNumber, platoon, phone };
+          const errors = validateSoldierInput(
+            input,
+            data.soldiers,
+            soldier?.personalNumber,
+          );
+          if (errors.length) {
+            setFormError(errors[0]);
+            return;
+          }
+          setFormError("");
+          onSave(input);
         }}
       >
-        <Field label="שם">
+        <Field label="שם מלא">
           <input
             required
             value={name}
@@ -2525,9 +2556,13 @@ function SoldierFormModal({
           <input
             required
             dir="ltr"
+            inputMode="numeric"
+            pattern="[0-9]*"
             disabled={Boolean(soldier)}
             value={personalNumber}
-            onChange={(event) => setPersonalNumber(event.target.value)}
+            onChange={(event) =>
+              setPersonalNumber(event.target.value.replace(/\D/g, ""))
+            }
           />
         </Field>
         <Field label="מחלקה">
@@ -2552,6 +2587,11 @@ function SoldierFormModal({
             onChange={(event) => setPhone(event.target.value)}
           />
         </Field>
+        {formError && (
+          <p className="form-error" role="alert">
+            {formError}
+          </p>
+        )}
         <div className="modal-actions">
           <button type="button" className="secondary-button" onClick={onClose}>
             ביטול
@@ -2568,12 +2608,16 @@ function SoldierFormModal({
 function CatalogFormModal({
   data,
   item,
+  allowedMethods,
+  canManageStock,
   saving,
   onClose,
   onSave,
 }: {
   data: CompanyData;
   item?: CatalogItem;
+  allowedMethods: ManagementMethod[];
+  canManageStock: boolean;
   saving: boolean;
   onClose: () => void;
   onSave: (input: CatalogInput) => void;
@@ -2581,7 +2625,9 @@ function CatalogFormModal({
   const [type, setType] = useState(item?.type || "");
   const [variant, setVariant] = useState(item?.variant || "");
   const [variantLabel, setVariantLabel] = useState(item?.variantLabel || "");
-  const [method, setMethod] = useState(item?.method || "צל״מ");
+  const [method, setMethod] = useState(
+    item?.method || allowedMethods[0] || "צל״מ",
+  );
   const [stock, setStock] = useState(String(item?.totalStock || 0));
   const [note, setNote] = useState(item?.note || "");
   return (
@@ -2633,11 +2679,12 @@ function CatalogFormModal({
               setMethod(event.target.value as "צל״מ" | "כמותי")
             }
           >
-            <option>צל״מ</option>
-            <option>כמותי</option>
+            {allowedMethods.map((value) => (
+              <option key={value}>{value}</option>
+            ))}
           </select>
         </Field>
-        {method === "כמותי" && (
+        {method === "כמותי" && canManageStock && (
           <Field label="מלאי התחלתי">
             <input
               type="number"
