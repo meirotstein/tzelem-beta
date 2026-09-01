@@ -252,6 +252,7 @@ Filtering is combinable. Clear filters must be easy to discover on mobile.
 - Hebrew-only user-facing copy for the MVP.
 - Set document and component direction to RTL, while keeping identifiers and numbers readable.
 - Design mobile-first with large touch targets, clear loading/saving/error states, and accessible form labels.
+- Keep filter controls in at least two columns even on narrow phones; the primary search field may span the full row.
 - Require confirmation for consequential actions such as return, transfer, archive, lost, and disabled.
 - Read-only mode must visibly explain why actions are unavailable, not merely hide all context.
 - Do not show stale success after a failed Sheets write. Provide a retry path where safe.

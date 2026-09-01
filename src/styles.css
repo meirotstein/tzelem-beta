@@ -1248,7 +1248,10 @@ textarea::placeholder {
     grid-template-columns: 1fr;
   }
   .filters {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .filters > * {
+    min-width: 0;
   }
   .filters > input:first-child {
     grid-column: 1 / -1;
@@ -1320,10 +1323,10 @@ textarea::placeholder {
 
 @media (max-width: 390px) {
   .filters {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .filters > input:first-child {
-    grid-column: auto;
+    grid-column: 1 / -1;
   }
   .page-heading .compact {
     padding: 0 8px;
