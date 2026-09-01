@@ -207,7 +207,7 @@ Prominent actions:
 
 ### Settings
 
-- Manage the catalog and platoons.
+- Manage platoons only. Catalog and equipment-type management belong exclusively in `מלאי`; do not duplicate catalog controls in `הגדרות`.
 - Do not allow removing a managed value while active records still reference it; archive or retain it instead.
 
 ## Search and filtering

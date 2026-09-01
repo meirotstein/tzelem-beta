@@ -691,13 +691,11 @@ export function App() {
                 (current, repository) =>
                   repository.saveSettings(current, {
                     platoons,
-                    schemaVersion: "2",
+                    schemaVersion: data.settings.schemaVersion,
                   }),
                 "המחלקות נשמרו",
               )
             }
-            onAddCatalog={() => setCatalogForm("new")}
-            onEditCatalog={setCatalogForm}
           />
         )}
       </main>
@@ -2185,14 +2183,10 @@ function SettingsView({
   data,
   editable,
   onSave,
-  onAddCatalog,
-  onEditCatalog,
 }: {
   data: CompanyData;
   editable: boolean;
   onSave: (values: string[]) => void;
-  onAddCatalog: () => void;
-  onEditCatalog: (item: CatalogItem) => void;
 }) {
   const [text, setText] = useState(data.settings.platoons.join("\n"));
   return (
@@ -2200,13 +2194,8 @@ function SettingsView({
       <div className="page-heading">
         <div>
           <h1>הגדרות</h1>
-          <p>קטלוג ציוד ומחלקות</p>
+          <p>ניהול מחלקות</p>
         </div>
-        {editable && (
-          <button className="primary-button" onClick={onAddCatalog}>
-            סוג ציוד חדש
-          </button>
-        )}
       </div>
       <section className="panel">
         <h2>מחלקות</h2>
@@ -2226,30 +2215,6 @@ function SettingsView({
             שמירת מחלקות
           </button>
         )}
-      </section>
-      <section className="panel">
-        <h2>קטלוג</h2>
-        <div className="cards-list compact">
-          {data.catalog.map((item) => (
-            <article
-              className={`list-card ${item.active ? "" : "archived"}`}
-              key={catalogKey(item.type, item.variant)}
-            >
-              <div>
-                <h3>{itemLabel(item.type, item.variant, item.variantLabel)}</h3>
-                <p>{item.method}</p>
-              </div>
-              {editable && (
-                <button
-                  className="small-button"
-                  onClick={() => onEditCatalog(item)}
-                >
-                  עריכה
-                </button>
-              )}
-            </article>
-          ))}
-        </div>
       </section>
     </section>
   );
