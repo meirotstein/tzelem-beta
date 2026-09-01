@@ -2239,11 +2239,16 @@ function HistoryView({
             <article key={entry.row}>
               <div>
                 <strong>{entry.action}</strong>
-                <span>
-                  {itemLabel(entry.type, entry.variant)}{" "}
-                  {entry.number && `· ${entry.number}`} {" "}
-                  {entry.quantity > 0 && `· כמות ${entry.quantity}`}
-                </span>
+                {entry.type && (
+                  <>
+                    {" · "}
+                    <span>
+                      {itemLabel(entry.type, entry.variant)}{" "}
+                      {entry.number && `· ${entry.number}`} {" "}
+                      {entry.quantity > 0 && `· כמות ${entry.quantity}`}
+                    </span>
+                  </>
+                )}
               </div>
               <p>
                 {entry.previousSoldier && `מ־${entry.previousSoldier}`} {" "}
