@@ -1,11 +1,12 @@
 import type {
   AdditiveSchemaUpgrade,
   EquipmentStatus,
+  EquipmentScope,
   ManagementMethod,
   SpreadsheetMeta,
 } from "./types";
 
-export const SCHEMA_VERSION = "3";
+export const SCHEMA_VERSION = "4";
 
 export const SHEET_SCHEMAS = {
   soldiers: {
@@ -68,6 +69,10 @@ export const SHEET_SCHEMAS = {
       "גרסת פורמט",
     ],
   },
+  permissions: {
+    title: "הרשאות",
+    headers: ["אימייל", "מנהל", "היקף ציוד", "מחלקות"],
+  },
   settings: { title: "הגדרות", headers: ["מחלקות", "מפתח", "ערך"] },
 } as const;
 
@@ -111,6 +116,12 @@ export const isEquipmentStatus = (value: string): value is EquipmentStatus =>
 
 export const isManagementMethod = (value: string): value is ManagementMethod =>
   value === "צל״מ" || value === "כמותי";
+
+export const isEquipmentScope = (value: string): value is EquipmentScope =>
+  value === "צל״מ" || value === "כמותי" || value === "הכל";
+
+export const parseYes = (value: unknown): boolean =>
+  ["true", "1", "כן"].includes(normalizeText(value).toLowerCase());
 
 export const headersMatch = (
   actual: unknown[],

@@ -10,6 +10,8 @@ export type EquipmentStatus = (typeof EQUIPMENT_STATUSES)[number];
 
 export const MANAGEMENT_METHODS = ["צל״מ", "כמותי"] as const;
 export type ManagementMethod = (typeof MANAGEMENT_METHODS)[number];
+export const EQUIPMENT_SCOPES = ["צל״מ", "כמותי", "הכל"] as const;
+export type EquipmentScope = (typeof EQUIPMENT_SCOPES)[number];
 
 export interface Soldier {
   row: number;
@@ -107,6 +109,29 @@ export interface ManagedSettings {
   schemaVersion: string;
 }
 
+export interface PermissionRecord {
+  row: number;
+  email: string;
+  admin: boolean;
+  equipmentScope: EquipmentScope;
+  platoons: string[];
+}
+
+export interface PermissionInput {
+  email: string;
+  admin: boolean;
+  equipmentScope: EquipmentScope;
+  platoons: string[];
+}
+
+export interface UserAccess {
+  email: string;
+  admin: boolean;
+  equipmentScope: EquipmentScope;
+  platoons: string[];
+  defined: boolean;
+}
+
 export interface SpreadsheetMeta {
   spreadsheetId: string;
   title: string;
@@ -129,6 +154,7 @@ export interface CompanyData {
   holdings: QuantityHolding[];
   movements: MovementEntry[];
   signatures: SignatureSummary[];
+  permissions: PermissionRecord[];
   settings: ManagedSettings;
 }
 

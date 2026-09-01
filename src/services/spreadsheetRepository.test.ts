@@ -59,7 +59,8 @@ const data: CompanyData = {
   holdings: [],
   movements: [],
   signatures: [],
-  settings: { platoons: ["1"], schemaVersion: "3" },
+  permissions: [],
+  settings: { platoons: ["1"], schemaVersion: "4" },
 };
 
 describe("saveSigningSession", () => {
@@ -181,7 +182,7 @@ describe("applyAdditiveSchemaUpgrade", () => {
         (value: { userEnteredValue: { stringValue?: string } }) =>
           value.userEnteredValue.stringValue,
       ),
-    ).toEqual(["schema_version", "3"]);
+    ).toEqual(["schema_version", "4"]);
   });
 });
 
@@ -258,7 +259,7 @@ describe("lazy signature loading", () => {
       client: { sheets: { spreadsheets: { values: { get } } } },
     };
     const repository = new SpreadsheetRepository("sheet");
-    const record = await repository.loadSignatureRecord({
+    const record = await repository.loadSignatureRecord(data, {
       row: 7,
       timestamp,
       personalNumber: soldier.personalNumber,
@@ -272,5 +273,94 @@ describe("lazy signature loading", () => {
     );
     expect(record.signature).toEqual(signature);
     expect(record.snapshot).toEqual(snapshot);
+  });
+});
+
+describe("repository permission enforcement", () => {
+  const batchUpdate = vi.fn().mockResolvedValue({});
+
+  beforeEach(() => {
+    batchUpdate.mockClear();
+    (globalThis as typeof globalThis & { gapi: unknown }).gapi = {
+      client: { sheets: { spreadsheets: { batchUpdate } } },
+    };
+  });
+
+  it("blocks a scoped user from another platoon and management method", async () => {
+    const repository = new SpreadsheetRepository("sheet");
+    const otherSoldier = { ...soldier, row: 3, personalNumber: "7654321", platoon: "2" };
+    const quantityItem = {
+      row: 2,
+      type: "חולצה",
+      variant: "",
+      variantLabel: "",
+      method: "כמותי" as const,
+      totalStock: 10,
+      note: "",
+      active: true,
+    };
+    const scopedData: CompanyData = {
+      ...data,
+      soldiers: [soldier, otherSoldier],
+      catalog: [quantityItem],
+      permissions: [
+        {
+          row: 2,
+          email: "admin@example.com",
+          admin: false,
+          equipmentScope: "צל״מ",
+          platoons: ["1"],
+        },
+      ],
+      settings: { platoons: ["1", "2"], schemaVersion: "4" },
+    };
+
+    await expect(
+      repository.assignNumbered(
+        scopedData,
+        scopedData.numberedItems[0],
+        otherSoldier,
+        "",
+      ),
+    ).rejects.toThrow("מחלקה");
+    await expect(
+      repository.issueQuantity(scopedData, quantityItem, soldier, 1, ""),
+    ).rejects.toThrow("סוג הציוד");
+    expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it("allows an admin to save permission definitions", async () => {
+    const repository = new SpreadsheetRepository("sheet");
+    const adminData: CompanyData = {
+      ...data,
+      permissions: [
+        {
+          row: 2,
+          email: "admin@example.com",
+          admin: true,
+          equipmentScope: "הכל",
+          platoons: [],
+        },
+      ],
+    };
+    await repository.savePermissions(adminData, [
+      {
+        email: "admin@example.com",
+        admin: true,
+        equipmentScope: "הכל",
+        platoons: [],
+      },
+      {
+        email: "user@example.com",
+        admin: false,
+        equipmentScope: "כמותי",
+        platoons: ["1"],
+      },
+    ]);
+
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+    const requests = batchUpdate.mock.calls[0][0].resource.requests;
+    expect(requests[0].updateCells.range.endColumnIndex).toBe(4);
+    expect(requests[1].appendCells).toBeTruthy();
   });
 });

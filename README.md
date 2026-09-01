@@ -1,4 +1,4 @@
-# ציוד פלוגתי
+# מת״ש — ניהול ציוד פלוגתי
 
 אפליקציית RTL מותאמת למובייל לניהול צל״מ וציוד כמותי באמצעות Google Sheets.
 
@@ -50,7 +50,7 @@ The OAuth client must allow the local and deployed web origins.
 
 ## Spreadsheet setup
 
-An editor opening a truly empty spreadsheet can explicitly choose **הכנת הגיליון לציוד פלוגתי**. The app creates the required `חיילים`, `קטלוג`, `פריטי צל״מ`, `החזקות כמותיות`, `תנועות`, `חתימות`, and `הגדרות` tabs.
+An editor opening a truly empty spreadsheet can explicitly choose **הכנת הגיליון למת״ש**. The app creates the required `חיילים`, `קטלוג`, `פריטי צל״מ`, `החזקות כמותיות`, `תנועות`, `חתימות`, `הרשאות`, and `הגדרות` tabs.
 
 The catalog defines whether each type is `צל״מ` or `כמותי`. It may also define an optional characteristic name and value—for example `מידה` + `M`; both remain empty when not relevant. All quantity values use the fixed display label `יח׳`. Current assignments are materialized in `פריטי צל״מ` and `החזקות כמותיות`; `תנועות` is an append-only audit trail and is not replayed to calculate current state.
 
@@ -59,5 +59,7 @@ Soldier phone numbers are optional. From a soldier profile, recent equipment mov
 The `החתמות` screen provides a single-session workflow: find a soldier with fuzzy search and edit their complete signed-equipment draft. `שמירת ההחתמה` opens a required touch-signature canvas; after the soldier signs, current-state changes, movement rows, the exact approved snapshot, and normalized signature strokes are saved together in one Sheets batch. A WhatsApp receipt for exactly that session is offered only after the save succeeds.
 
 Saved signatures can be viewed from the soldier profile and from grouped signing-operation cards in `תנועות`. Normal loading reads only the lightweight signature index; the snapshot and stroke JSON for a single row are fetched and validated only when `הצגת חתימה` is selected, then cached in memory.
+
+Permissions are resolved from the signed-in Google email. The `הרשאות` tab supports admins, equipment scope (`צל״מ`, `כמותי`, or `הכל`), and an optional comma-separated platoon scope. Blank platoons mean all; an email without a row keeps full operational scope but is not an admin. The first admin must be added manually in the sheet. Only admins can open `הגדרות`, manage permissions/catalog/platoons, or adjust stock; scoped visibility and every repository write enforce the same rules.
 
 When a schema update only requires adding a missing required tab or required trailing columns, the app lists the exact additions and offers editors an explicit **השלמת מבנה הגיליון** action. Existing data is not moved or overwritten. Reordered, renamed, or conflicting headers remain incompatible and are never changed automatically.

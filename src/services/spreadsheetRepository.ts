@@ -10,6 +10,8 @@ import type {
   MovementEntry,
   NumberedItem,
   NumberedItemInput,
+  PermissionInput,
+  PermissionRecord,
   QuantityHolding,
   Soldier,
   SoldierInput,
@@ -25,11 +27,13 @@ import {
   catalogKey,
   holdingKey,
   isEquipmentStatus,
+  isEquipmentScope,
   isManagementMethod,
   isWorkbookEmpty,
   normalizeText,
   numberedItemKey,
   parseActive,
+  parseYes,
   SCHEMA_VERSION,
   SHEET_SCHEMAS,
   describeAdditiveUpgrade,
@@ -41,6 +45,14 @@ import {
   parseSignature,
   SIGNATURE_FORMAT_VERSION,
 } from "../domain/signature";
+import {
+  canAccessMethod,
+  canAccessPersonalNumber,
+  canAccessSoldier,
+  normalizeEmail,
+  resolveUserAccess,
+  validatePermissionInputs,
+} from "../domain/permissions";
 import {
   availableQuantity,
   canRemoveCatalogItem,
@@ -292,6 +304,7 @@ export class SpreadsheetRepository {
 
   async addSoldier(data: CompanyData, input: SoldierInput): Promise<void> {
     this.ensureEditable(data);
+    this.ensurePlatoonAccess(data, normalizeText(input.platoon));
     const errors = validateSoldierInput(input, data.soldiers);
     if (errors.length) throw new Error(errors[0]);
     await this.batch([
@@ -315,7 +328,10 @@ export class SpreadsheetRepository {
     soldier: Soldier,
     input: SoldierInput,
   ): Promise<void> {
+    soldier = this.currentSoldier(data, soldier);
     this.ensureEditable(data);
+    this.ensureSoldierAccess(data, soldier);
+    this.ensurePlatoonAccess(data, normalizeText(input.platoon));
     if (normalizeText(input.personalNumber) !== soldier.personalNumber)
       throw new Error("לא ניתן לשנות מספר אישי לאחר יצירת החייל.");
     const errors = validateSoldierInput(
@@ -345,7 +361,9 @@ export class SpreadsheetRepository {
     soldier: Soldier,
     active: boolean,
   ): Promise<void> {
+    soldier = this.currentSoldier(data, soldier);
     this.ensureEditable(data);
+    this.ensureSoldierAccess(data, soldier);
     const issue = active
       ? null
       : canRemoveSoldier(soldier, data.numberedItems, data.holdings);
@@ -368,6 +386,7 @@ export class SpreadsheetRepository {
 
   async addCatalogItem(data: CompanyData, input: CatalogInput): Promise<void> {
     this.ensureEditable(data);
+    this.ensureAdmin(data);
     const errors = validateCatalogInput(input, data.catalog);
     if (errors.length) throw new Error(errors[0]);
     await this.batch([
@@ -388,7 +407,9 @@ export class SpreadsheetRepository {
     item: CatalogItem,
     input: CatalogInput,
   ): Promise<void> {
+    item = this.currentCatalogItem(data, item);
     this.ensureEditable(data);
+    this.ensureAdmin(data);
     if (
       catalogKey(input.type, input.variant) !==
         catalogKey(item.type, item.variant) ||
@@ -426,7 +447,9 @@ export class SpreadsheetRepository {
     item: CatalogItem,
     active: boolean,
   ): Promise<void> {
+    item = this.currentCatalogItem(data, item);
     this.ensureEditable(data);
+    this.ensureAdmin(data);
     const issue = active
       ? null
       : canRemoveCatalogItem(item, data.numberedItems, data.holdings);
@@ -455,6 +478,7 @@ export class SpreadsheetRepository {
     input: NumberedItemInput,
   ): Promise<void> {
     this.ensureEditable(data);
+    this.ensureMethodAccess(data, "צל״מ");
     const catalog = data.catalog.find(
       (item) =>
         item.active &&
@@ -496,7 +520,10 @@ export class SpreadsheetRepository {
     item: NumberedItem,
     input: NumberedItemInput,
   ): Promise<void> {
+    item = this.currentNumberedItem(data, item);
     this.ensureEditable(data);
+    this.ensureMethodAccess(data, "צל״מ");
+    this.ensurePersonalNumberAccess(data, item.assignedTo);
     if (
       numberedItemKey(input.type, input.number) !==
         numberedItemKey(item.type, item.number) ||
@@ -536,7 +563,10 @@ export class SpreadsheetRepository {
     item: NumberedItem,
     active: boolean,
   ): Promise<void> {
+    item = this.currentNumberedItem(data, item);
     this.ensureEditable(data);
+    this.ensureMethodAccess(data, "צל״מ");
+    this.ensurePersonalNumberAccess(data, item.assignedTo);
     const issue = active ? null : canRemoveNumberedItem(item);
     if (issue) throw new Error(issue);
     await this.batch([
@@ -568,6 +598,9 @@ export class SpreadsheetRepository {
     item = this.currentNumberedItem(data, item);
     soldier = this.currentSoldier(data, soldier);
     this.ensureEditable(data);
+    this.ensureMethodAccess(data, "צל״מ");
+    this.ensurePersonalNumberAccess(data, item.assignedTo);
+    this.ensureSoldierAccess(data, soldier);
     if (!item.active || !soldier.active)
       throw new Error("לא ניתן להחתים רשומה לא פעילה.");
     if (!item.assignedTo && item.status !== "זמין")
@@ -605,6 +638,8 @@ export class SpreadsheetRepository {
   ): Promise<void> {
     item = this.currentNumberedItem(data, item);
     this.ensureEditable(data);
+    this.ensureMethodAccess(data, "צל״מ");
+    this.ensurePersonalNumberAccess(data, item.assignedTo);
     if (!item.assignedTo) throw new Error("הפריט אינו מוחזק בידי חייל.");
     await this.batch([
       updateRow(this.sheetId(data, "numberedItems"), item.row, [
@@ -637,6 +672,8 @@ export class SpreadsheetRepository {
   ): Promise<void> {
     item = this.currentNumberedItem(data, item);
     this.ensureEditable(data);
+    this.ensureMethodAccess(data, "צל״מ");
+    this.ensurePersonalNumberAccess(data, item.assignedTo);
     const errors = validateStatusChange(status, note);
     if (errors.length) throw new Error(errors[0]);
     if (item.assignedTo && status !== "משויך")
@@ -676,6 +713,8 @@ export class SpreadsheetRepository {
     soldier = this.currentSoldier(data, soldier);
     this.ensurePositiveQuantity(quantity);
     this.ensureEditable(data);
+    this.ensureMethodAccess(data, "כמותי");
+    this.ensureSoldierAccess(data, soldier);
     if (!item.active || item.method !== "כמותי" || !soldier.active)
       throw new Error("לא ניתן להחתים את הרשומה שנבחרה.");
     if (availableQuantity(item, data.holdings) < quantity)
@@ -717,6 +756,8 @@ export class SpreadsheetRepository {
     soldier = this.currentSoldier(data, soldier);
     this.ensurePositiveQuantity(quantity);
     this.ensureEditable(data);
+    this.ensureMethodAccess(data, "כמותי");
+    this.ensureSoldierAccess(data, soldier);
     const current = holdingFor(
       data.holdings,
       soldier.personalNumber,
@@ -758,6 +799,9 @@ export class SpreadsheetRepository {
     to = this.currentSoldier(data, to);
     this.ensurePositiveQuantity(quantity);
     this.ensureEditable(data);
+    this.ensureMethodAccess(data, "כמותי");
+    this.ensureSoldierAccess(data, from);
+    this.ensureSoldierAccess(data, to);
     if (!to.active || from.personalNumber === to.personalNumber)
       throw new Error("יש לבחור חייל פעיל אחר.");
     const source = holdingFor(
@@ -810,6 +854,7 @@ export class SpreadsheetRepository {
   ): Promise<void> {
     item = this.currentCatalogItem(data, item);
     this.ensureEditable(data);
+    this.ensureAdmin(data);
     if (
       item.method !== "כמותי" ||
       !Number.isInteger(totalStock) ||
@@ -850,6 +895,10 @@ export class SpreadsheetRepository {
   ): Promise<MovementEntry[]> {
     this.ensureEditable(data);
     soldier = this.currentSoldier(data, soldier);
+    this.ensureSoldierAccess(data, soldier);
+    if (input.numberedToAssign.length || input.numberedToReturn.length)
+      this.ensureMethodAccess(data, "צל״מ");
+    if (input.quantityTargets.length) this.ensureMethodAccess(data, "כמותי");
     const timestamp = new Date().toISOString();
     const requests: any[] = [];
     const drafts: MovementDraft[] = [];
@@ -1024,8 +1073,10 @@ export class SpreadsheetRepository {
   }
 
   async loadSignatureRecord(
+    data: CompanyData,
     summary: SignatureSummary,
   ): Promise<SignatureRecord> {
+    this.ensurePersonalNumberAccess(data, summary.personalNumber);
     const response = await gapi.client.sheets.spreadsheets.values.get({
       spreadsheetId: this.spreadsheetId,
       range: `${quoteSheet(SHEET_SCHEMAS.signatures.title)}!A${summary.row}:G${summary.row}`,
@@ -1066,9 +1117,21 @@ export class SpreadsheetRepository {
     settings: ManagedSettings,
   ): Promise<void> {
     this.ensureEditable(data);
+    this.ensureAdmin(data);
     const unique = [
       ...new Set(settings.platoons.map(normalizeText).filter(Boolean)),
     ];
+    const referencedPlatoons = new Set([
+      ...data.soldiers.map((soldier) => soldier.platoon),
+      ...data.permissions.flatMap((permission) => permission.platoons),
+    ]);
+    const removedReferenced = [...referencedPlatoons].find(
+      (platoon) => platoon && !unique.includes(platoon),
+    );
+    if (removedReferenced)
+      throw new Error(
+        `לא ניתן להסיר את מחלקה ${removedReferenced} כל עוד חיילים או הרשאות משתמשים בה.`,
+      );
     const rowCount = Math.max(data.settings.platoons.length, unique.length) + 2;
     const rows: CellPrimitive[][] = [[...SHEET_SCHEMAS.settings.headers]];
     for (let index = 0; index < rowCount - 2; index += 1)
@@ -1091,6 +1154,61 @@ export class SpreadsheetRepository {
       this.movementRequest(data, {
         action: "עדכון מחלקות",
         note: unique.join(", "),
+      }),
+    ]);
+  }
+
+  async savePermissions(
+    data: CompanyData,
+    inputs: PermissionInput[],
+  ): Promise<void> {
+    this.ensureEditable(data);
+    this.ensureAdmin(data);
+    const normalized = inputs.map((input) => {
+      const admin = Boolean(input.admin);
+      return {
+        email: normalizeEmail(input.email),
+        admin,
+        equipmentScope: admin ? ("הכל" as const) : input.equipmentScope,
+        platoons: admin
+          ? []
+          : [...new Set(input.platoons.map(normalizeText).filter(Boolean))],
+      };
+    });
+    const errors = validatePermissionInputs(
+      normalized,
+      data.settings.platoons,
+      true,
+    );
+    if (errors.length) throw new Error(errors[0]);
+    const rowCount = Math.max(data.permissions.length, normalized.length) + 1;
+    const rows: CellPrimitive[][] = [
+      [...SHEET_SCHEMAS.permissions.headers],
+      ...normalized.map((permission) => [
+        permission.email,
+        permission.admin,
+        permission.equipmentScope,
+        permission.platoons.join(", "),
+      ]),
+    ];
+    while (rows.length < rowCount) rows.push(["", "", "", ""]);
+    await this.batch([
+      {
+        updateCells: {
+          range: {
+            sheetId: this.sheetId(data, "permissions"),
+            startRowIndex: 0,
+            endRowIndex: rowCount,
+            startColumnIndex: 0,
+            endColumnIndex: 4,
+          },
+          rows: rows.map(rowData),
+          fields: "userEnteredValue",
+        },
+      },
+      this.movementRequest(data, {
+        action: "עדכון הרשאות",
+        note: normalized.map((permission) => permission.email).join(", "),
       }),
     ]);
   }
@@ -1204,6 +1322,26 @@ export class SpreadsheetRepository {
       )
         throw new Error(`פרטי חתימה חסרים בשורה ${record.row}.`);
     });
+    const permissions: PermissionRecord[] = (
+      rows[SHEET_SCHEMAS.permissions.title] || []
+    )
+      .slice(1)
+      .map((row, index) => {
+        const equipmentScope = normalizeText(row[2]) || "הכל";
+        if (!isEquipmentScope(equipmentScope))
+          throw new Error(`היקף ציוד לא תקין בהרשאות, שורה ${index + 2}.`);
+        return {
+          row: index + 2,
+          email: normalizeEmail(normalizeText(row[0])),
+          admin: parseYes(row[1]),
+          equipmentScope,
+          platoons: normalizeText(row[3])
+            .split(/[,،;\n]/)
+            .map(normalizeText)
+            .filter(Boolean),
+        };
+      })
+      .filter((permission) => permission.email);
     const settingRows = (rows[SHEET_SCHEMAS.settings.title] || []).slice(1);
     const settings: ManagedSettings = {
       platoons: [
@@ -1292,6 +1430,11 @@ export class SpreadsheetRepository {
         if (issuedQuantity(item, holdings) > item.totalStock)
           throw new Error(`הכמות המוחזקת של ${item.type} גדולה מהמלאי הכולל.`);
       });
+    const permissionErrors = validatePermissionInputs(
+      permissions,
+      settings.platoons,
+    );
+    if (permissionErrors.length) throw new Error(permissionErrors[0]);
     if (settings.schemaVersion !== SCHEMA_VERSION)
       throw new Error(
         `גרסת מבנה הגיליון אינה נתמכת (${settings.schemaVersion || "חסרה"}).`,
@@ -1304,6 +1447,7 @@ export class SpreadsheetRepository {
       holdings,
       movements,
       signatures,
+      permissions,
       settings,
     };
   }
@@ -1403,6 +1547,45 @@ export class SpreadsheetRepository {
 
   private ensureEditable(data: CompanyData) {
     if (!data.meta.editable) throw new Error("הגיליון פתוח לקריאה בלבד.");
+  }
+
+  private access(data: CompanyData) {
+    return resolveUserAccess(data.meta.userEmail, data.permissions);
+  }
+
+  private ensureAdmin(data: CompanyData) {
+    if (!this.access(data).admin)
+      throw new Error("הפעולה זמינה למנהלים בלבד.");
+  }
+
+  private ensureMethodAccess(
+    data: CompanyData,
+    method: "צל״מ" | "כמותי",
+  ) {
+    if (!canAccessMethod(this.access(data), method))
+      throw new Error("אין הרשאה לטפל בסוג הציוד הזה.");
+  }
+
+  private ensurePlatoonAccess(data: CompanyData, platoon: string) {
+    const access = this.access(data);
+    if (!access.admin && access.platoons.length && !access.platoons.includes(platoon))
+      throw new Error("אין הרשאה לטפל במחלקה הזאת.");
+  }
+
+  private ensureSoldierAccess(data: CompanyData, soldier: Soldier) {
+    if (!canAccessSoldier(this.access(data), soldier))
+      throw new Error("אין הרשאה לטפל בחייל מהמחלקה הזאת.");
+  }
+
+  private ensurePersonalNumberAccess(
+    data: CompanyData,
+    personalNumber: string,
+  ) {
+    if (
+      personalNumber &&
+      !canAccessPersonalNumber(this.access(data), personalNumber, data)
+    )
+      throw new Error("אין הרשאה לצפות או לטפל ברשומה הזאת.");
   }
 
   private ensurePositiveQuantity(quantity: number) {

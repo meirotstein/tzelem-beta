@@ -78,7 +78,7 @@ describe("spreadsheet compatibility", () => {
       validateHeaders(partialMeta, {
         חיילים: [[...SHEET_SCHEMAS.soldiers.headers]],
       }),
-    ).toHaveLength(6);
+    ).toHaveLength(7);
   });
 
   it("offers an additive upgrade for a missing tab or trailing column", () => {

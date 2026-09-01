@@ -96,7 +96,7 @@ export function buildInventoryWhatsAppMessage(
     filters.platoon && `מחלקה ${filters.platoon}`,
     filters.showArchived && "כולל שהוסרו",
   ].filter(Boolean) as string[];
-  const lines = ["*מלאי ציוד פלוגתי*", filterSummary(filterParts), ""];
+  const lines = ["*מת״ש — מלאי ציוד פלוגתי*", filterSummary(filterParts), ""];
   const types = [
     ...new Set([
       ...numbered.map((item) => item.type),

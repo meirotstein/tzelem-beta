@@ -20,6 +20,11 @@ import {
   soldierHasEquipment,
   soldiersWithoutEquipment,
 } from "./domain/rules";
+import {
+  canAccessMethod,
+  resolveUserAccess,
+  scopeCompanyData,
+} from "./domain/permissions";
 import { catalogKey, itemLabel, numberedItemKey } from "./domain/schema";
 import {
   isValidSignature,
@@ -39,6 +44,8 @@ import type {
   LoadResult,
   MovementEntry,
   NumberedItem,
+  PermissionInput,
+  PermissionRecord,
   SignatureData,
   SignaturePoint,
   SignatureRecord,
@@ -46,8 +53,13 @@ import type {
   SigningSessionInput,
   Soldier,
   SoldierInput,
+  UserAccess,
 } from "./domain/types";
-import { EQUIPMENT_STATUSES, MANAGEMENT_METHODS } from "./domain/types";
+import {
+  EQUIPMENT_SCOPES,
+  EQUIPMENT_STATUSES,
+  MANAGEMENT_METHODS,
+} from "./domain/types";
 import {
   GOOGLE_LOGIN_HINT_STORAGE_KEY,
   GOOGLE_SIGNED_IN_STORAGE_KEY,
@@ -200,6 +212,17 @@ export function App() {
   const signatureCache = useRef(new Map<string, SignatureRecord>());
 
   const data = result?.kind === "ready" ? result.data : null;
+  const access = useMemo(
+    () => (data ? resolveUserAccess(data.meta.userEmail, data.permissions) : null),
+    [data],
+  );
+  const visibleData = useMemo(() => {
+    if (!data || !access) return null;
+    return scopeCompanyData(data, access);
+  }, [access, data]);
+  useEffect(() => {
+    if (view === "settings" && access && !access.admin) setView("dashboard");
+  }, [access, view]);
   const repo = useMemo(
     () => (spreadsheetId ? new SpreadsheetRepository(spreadsheetId) : null),
     [spreadsheetId],
@@ -299,7 +322,7 @@ export function App() {
     if (!repo || result?.kind !== "empty") return;
     if (
       !window.confirm(
-        "להכין את הגיליון הריק לציוד פלוגתי? הפעולה תיצור את הלשוניות והכותרות הנדרשות.",
+        "להכין את הגיליון הריק למת״ש? הפעולה תיצור את הלשוניות והכותרות הנדרשות.",
       )
     )
       return;
@@ -384,7 +407,8 @@ export function App() {
     }
     setSignatureViewer({ key, summary, record: null, loading: true, error: "" });
     try {
-      const record = await repo.loadSignatureRecord(summary);
+      if (!data) throw new Error("הנתונים אינם זמינים.");
+      const record = await repo.loadSignatureRecord(data, summary);
       signatureCache.current.set(key, record);
       setSignatureViewer((current) =>
         current?.key === key
@@ -445,14 +469,14 @@ export function App() {
       <ShellHeader name={signedInName} onSignOut={signOut}>
         <main className="center-card">
           <h2>הגיליון ריק</h2>
-          <p>ניתן להכין אותו כמערכת ציוד פלוגתי חדשה.</p>
+          <p>ניתן להכין אותו כמערכת מת״ש חדשה.</p>
           {result.meta.editable ? (
             <button
               className="primary-button"
               disabled={saving}
               onClick={() => void initializeSheet()}
             >
-              הכנת הגיליון לציוד פלוגתי
+              הכנת הגיליון למת״ש
             </button>
           ) : (
             <p className="read-only-banner">
@@ -513,7 +537,7 @@ export function App() {
     return (
       <ShellHeader name={signedInName} onSignOut={signOut}>
         <main className="center-card">
-          <h2>מבנה הגיליון אינו תואם לציוד פלוגתי</h2>
+          <h2>מבנה הגיליון אינו תואם למת״ש</h2>
           <p>לא בוצעו שינויים.</p>
           <ul>
             {result.issues.map((issue) => (
@@ -529,7 +553,11 @@ export function App() {
         </main>
       </ShellHeader>
     );
-  if (!data) return null;
+  if (!data || !visibleData || !access) return null;
+  const operationData: CompanyData = {
+    ...visibleData,
+    holdings: data.holdings,
+  };
 
   return (
     <div className="app-shell" dir="rtl">
@@ -537,8 +565,8 @@ export function App() {
         <div className="brand">
           <img src={logoUrl} alt="" />
           <div>
-            <strong>ציוד פלוגתי</strong>
-            <small>{data.meta.title}</small>
+            <strong>מת״ש</strong>
+            <small>ניהול ציוד פלוגתי · {data.meta.title}</small>
           </div>
         </div>
         <div className="user-area">
@@ -575,8 +603,9 @@ export function App() {
       <main className="content">
         {view === "dashboard" && (
           <Dashboard
-            data={data}
+            data={visibleData}
             editable={data.meta.editable}
+            access={access}
             onView={setView}
             onAddSoldier={() => setSoldierForm("new")}
             onAddNumbered={() => setNumberedForm("new")}
@@ -585,7 +614,7 @@ export function App() {
         )}
         {view === "soldiers" && (
           <SoldiersView
-            data={data}
+            data={visibleData}
             editable={data.meta.editable}
             onAdd={() => setSoldierForm("new")}
             onEdit={setSoldierForm}
@@ -614,7 +643,7 @@ export function App() {
         )}
         {view === "signings" && (
           <SigningsView
-            data={data}
+            data={operationData}
             editable={data.meta.editable}
             saving={saving}
             onSave={async (soldier, input) => {
@@ -633,8 +662,10 @@ export function App() {
         )}
         {view === "inventory" && (
           <InventoryView
-            data={data}
+            data={visibleData}
+            stockHoldings={data.holdings}
             editable={data.meta.editable}
+            access={access}
             onAddCatalog={() => setCatalogForm("new")}
             onAddNumbered={() => setNumberedForm("new")}
             onCatalog={setCatalogDetail}
@@ -680,9 +711,9 @@ export function App() {
           />
         )}
         {view === "history" && (
-          <HistoryView data={data} onSignature={openSignature} />
+          <HistoryView data={visibleData} onSignature={openSignature} />
         )}
-        {view === "settings" && (
+        {view === "settings" && access.admin && (
           <SettingsView
             data={data}
             editable={data.meta.editable}
@@ -694,6 +725,13 @@ export function App() {
                     schemaVersion: data.settings.schemaVersion,
                   }),
                 "המחלקות נשמרו",
+              )
+            }
+            onSavePermissions={(permissions) =>
+              void mutate(
+                (current, repository) =>
+                  repository.savePermissions(current, permissions),
+                "ההרשאות נשמרו",
               )
             }
           />
@@ -709,7 +747,9 @@ export function App() {
             ["history", "תנועות"],
             ["settings", "הגדרות"],
           ] as const
-        ).map(([id, label]) => (
+        )
+          .filter(([id]) => id !== "settings" || access.admin)
+          .map(([id, label]) => (
           <button
             key={id}
             className={view === id ? "active" : ""}
@@ -717,12 +757,12 @@ export function App() {
           >
             {label}
           </button>
-        ))}
+          ))}
       </nav>
 
       {soldierForm && (
         <SoldierFormModal
-          data={data}
+          data={visibleData}
           soldier={soldierForm === "new" ? undefined : soldierForm}
           saving={saving}
           onClose={() => setSoldierForm(null)}
@@ -738,9 +778,9 @@ export function App() {
           }}
         />
       )}
-      {catalogForm && (
+      {catalogForm && access.admin && (
         <CatalogFormModal
-          data={data}
+          data={visibleData}
           item={catalogForm === "new" ? undefined : catalogForm}
           saving={saving}
           onClose={() => setCatalogForm(null)}
@@ -756,9 +796,9 @@ export function App() {
           }}
         />
       )}
-      {numberedForm && (
+      {numberedForm && canAccessMethod(access, "צל״מ") && (
         <NumberedFormModal
-          data={data}
+          data={operationData}
           item={numberedForm === "new" ? undefined : numberedForm}
           saving={saving}
           onClose={() => setNumberedForm(null)}
@@ -792,7 +832,7 @@ export function App() {
             let shareRecipient: Soldier | null = null;
             if (action.kind === "numbered") {
               if (action.mode === "assign") {
-                const soldier = data.soldiers.find(
+                const soldier = visibleData.soldiers.find(
                   (candidate) => candidate.personalNumber === values.soldier,
                 );
                 if (soldier)
@@ -843,10 +883,10 @@ export function App() {
             else {
               const soldier =
                 action.soldier ||
-                data.soldiers.find(
+                visibleData.soldiers.find(
                   (candidate) => candidate.personalNumber === values.soldier,
                 );
-              const target = data.soldiers.find(
+              const target = visibleData.soldiers.find(
                 (candidate) => candidate.personalNumber === values.target,
               );
               if (action.mode === "issue" && soldier)
@@ -902,7 +942,7 @@ export function App() {
       )}
       {soldierDetail && (
         <SoldierDetail
-          data={data}
+          data={visibleData}
           soldier={soldierDetail}
           editable={data.meta.editable}
           onClose={() => setSoldierDetail(null)}
@@ -918,7 +958,7 @@ export function App() {
       )}
       {movementShareSoldier && (
         <MovementShareModal
-          data={data}
+          data={visibleData}
           soldier={movementShareSoldier}
           onClose={() => setMovementShareSoldier(null)}
         />
@@ -938,9 +978,11 @@ export function App() {
       )}
       {catalogDetail && (
         <CatalogDetail
-          data={data}
+          data={visibleData}
+          stockHoldings={data.holdings}
           item={catalogDetail}
           editable={data.meta.editable}
+          canManageStock={access.admin}
           onClose={() => setCatalogDetail(null)}
           onAction={setAction}
         />
@@ -963,7 +1005,10 @@ function ShellHeader({
       <header className="topbar">
         <div className="brand">
           <img src={logoUrl} alt="" />
-          <strong>ציוד פלוגתי</strong>
+          <div>
+            <strong>מת״ש</strong>
+            <small>ניהול ציוד פלוגתי</small>
+          </div>
         </div>
         <div className="user-area">
           <span>{name}</span>
@@ -980,7 +1025,8 @@ function Splash({ text }: { text: string }) {
   return (
     <div className="splash" dir="rtl">
       <img src={logoUrl} alt="" />
-      <h1>ציוד פלוגתי</h1>
+      <h1>מת״ש</h1>
+      <p className="product-subtitle">ניהול ציוד פלוגתי</p>
       <p>{text}</p>
     </div>
   );
@@ -990,8 +1036,8 @@ function Welcome({ error, onSignIn }: { error: string; onSignIn: () => void }) {
     <div className="welcome" dir="rtl">
       <div className="welcome-card">
         <img src={logoUrl} alt="" />
-        <h1>ציוד פלוגתי</h1>
-        <p>ניהול צל״מ וציוד כמותי לפלוגה</p>
+        <h1>מת״ש</h1>
+        <p>ניהול ציוד פלוגתי</p>
         {error && <p className="form-error">{error}</p>}
         <button className="google-button" onClick={onSignIn}>
           התחברות עם Google
@@ -1035,6 +1081,7 @@ function SheetPicker({
 function Dashboard({
   data,
   editable,
+  access,
   onView,
   onAddSoldier,
   onAddNumbered,
@@ -1042,6 +1089,7 @@ function Dashboard({
 }: {
   data: CompanyData;
   editable: boolean;
+  access: UserAccess;
   onView: (view: View) => void;
   onAddSoldier: () => void;
   onAddNumbered: () => void;
@@ -1100,9 +1148,11 @@ function Dashboard({
           <button className="secondary-button" onClick={onAddSoldier}>
             הוספת חייל
           </button>
-          <button className="secondary-button" onClick={onAddNumbered}>
-            הוספת פריט צל״מ
-          </button>
+          {canAccessMethod(access, "צל״מ") && (
+            <button className="secondary-button" onClick={onAddNumbered}>
+              הוספת פריט צל״מ
+            </button>
+          )}
         </div>
       )}
       <section className="panel">
@@ -1698,7 +1748,9 @@ function SigningsView({
 
 function InventoryView({
   data,
+  stockHoldings,
   editable,
+  access,
   onAddCatalog,
   onAddNumbered,
   onCatalog,
@@ -1709,7 +1761,9 @@ function InventoryView({
   onNumberedToggle,
 }: {
   data: CompanyData;
+  stockHoldings: CompanyData["holdings"];
   editable: boolean;
+  access: UserAccess;
   onAddCatalog: () => void;
   onAddNumbered: () => void;
   onCatalog: (item: CatalogItem) => void;
@@ -1785,12 +1839,16 @@ function InventoryView({
           </button>
           {editable && (
             <>
-              <button className="secondary-button" onClick={onAddCatalog}>
-                סוג ציוד חדש
-              </button>
-              <button className="primary-button" onClick={onAddNumbered}>
-                פריט צל״מ חדש
-              </button>
+              {access.admin && (
+                <button className="secondary-button" onClick={onAddCatalog}>
+                  סוג ציוד חדש
+                </button>
+              )}
+              {canAccessMethod(access, "צל״מ") && (
+                <button className="primary-button" onClick={onAddNumbered}>
+                  פריט צל״מ חדש
+                </button>
+              )}
             </>
           )}
         </div>
@@ -1806,9 +1864,11 @@ function InventoryView({
           onChange={(event) => setMethod(event.target.value)}
         >
           <option value="">כל שיטות הניהול</option>
-          {MANAGEMENT_METHODS.map((value) => (
-            <option key={value}>{value}</option>
-          ))}
+          {MANAGEMENT_METHODS.filter((value) =>
+            canAccessMethod(access, value),
+          ).map((value) => (
+              <option key={value}>{value}</option>
+            ))}
         </select>
         <select value={type} onChange={(event) => setType(event.target.value)}>
           <option value="">כל הסוגים</option>
@@ -1926,10 +1986,10 @@ function InventoryView({
                   מלאי <strong>{item.totalStock}</strong>
                 </span>
                 <span>
-                  מוחזק <strong>{issuedQuantity(item, data.holdings)}</strong>
+                  מוחזק <strong>{issuedQuantity(item, stockHoldings)}</strong>
                 </span>
                 <span>
-                  זמין <strong>{availableQuantity(item, data.holdings)}</strong>
+                  זמין <strong>{availableQuantity(item, stockHoldings)}</strong>
                 </span>
               </div>
             </div>
@@ -1946,24 +2006,28 @@ function InventoryView({
                 >
                   החתמה
                 </button>
-                <button
-                  className="small-button"
-                  onClick={() => onAction({ kind: "stock", item })}
-                >
-                  עדכון מלאי
-                </button>
-                <button
-                  className="small-button"
-                  onClick={() => onCatalogEdit(item)}
-                >
-                  עריכה
-                </button>
-                <button
-                  className="small-button danger-text"
-                  onClick={() => onCatalogToggle(item)}
-                >
-                  {item.active ? "הסר" : "הפעל"}
-                </button>
+                {access.admin && (
+                  <>
+                    <button
+                      className="small-button"
+                      onClick={() => onAction({ kind: "stock", item })}
+                    >
+                      עדכון מלאי
+                    </button>
+                    <button
+                      className="small-button"
+                      onClick={() => onCatalogEdit(item)}
+                    >
+                      עריכה
+                    </button>
+                    <button
+                      className="small-button danger-text"
+                      onClick={() => onCatalogToggle(item)}
+                    >
+                      {item.active ? "הסר" : "הפעל"}
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </article>
@@ -2183,18 +2247,30 @@ function SettingsView({
   data,
   editable,
   onSave,
+  onSavePermissions,
 }: {
   data: CompanyData;
   editable: boolean;
   onSave: (values: string[]) => void;
+  onSavePermissions: (permissions: PermissionInput[]) => void;
 }) {
   const [text, setText] = useState(data.settings.platoons.join("\n"));
+  const [permissionForm, setPermissionForm] = useState<
+    PermissionRecord | "new" | null
+  >(null);
+  const permissionInputs = (records: PermissionRecord[]): PermissionInput[] =>
+    records.map(({ email, admin, equipmentScope, platoons }) => ({
+      email,
+      admin,
+      equipmentScope,
+      platoons,
+    }));
   return (
     <section>
       <div className="page-heading">
         <div>
           <h1>הגדרות</h1>
-          <p>ניהול מחלקות</p>
+          <p>ניהול מחלקות והרשאות</p>
         </div>
       </div>
       <section className="panel">
@@ -2216,7 +2292,198 @@ function SettingsView({
           </button>
         )}
       </section>
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <h2>הרשאות משתמשים</h2>
+            <p>משתמש ללא הגדרה מקבל גישה לכל המחלקות ולכל סוגי הציוד.</p>
+          </div>
+          {editable && (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setPermissionForm("new")}
+            >
+              הוספת משתמש
+            </button>
+          )}
+        </div>
+        <div className="cards-list compact">
+          {data.permissions.map((permission) => (
+            <article className="list-card" key={permission.email}>
+              <div>
+                <strong dir="ltr">{permission.email}</strong>
+                <p>
+                  {permission.admin
+                    ? "מנהל · כל הציוד וכל המחלקות"
+                    : `${permission.equipmentScope} · ${
+                        permission.platoons.length
+                          ? `מחלקות ${permission.platoons.join(", ")}`
+                          : "כל המחלקות"
+                      }`}
+                </p>
+              </div>
+              {editable && (
+                <div className="card-actions">
+                  <button
+                    type="button"
+                    className="small-button"
+                    onClick={() => setPermissionForm(permission)}
+                  >
+                    עריכה
+                  </button>
+                  <button
+                    type="button"
+                    className="small-button danger-text"
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          "להסיר את הגדרת המשתמש? ללא הגדרה תהיה לו גישה תפעולית מלאה כברירת מחדל.",
+                        )
+                      )
+                        onSavePermissions(
+                          permissionInputs(
+                            data.permissions.filter(
+                              (candidate) =>
+                                candidate.email !== permission.email,
+                            ),
+                          ),
+                        );
+                    }}
+                  >
+                    הסרה
+                  </button>
+                </div>
+              )}
+            </article>
+          ))}
+          {!data.permissions.length && (
+            <EmptyList>
+              אין הגדרות הרשאה. יש להוסיף מנהל ראשון ידנית בלשונית הרשאות.
+            </EmptyList>
+          )}
+        </div>
+      </section>
+      {permissionForm && (
+        <PermissionFormModal
+          permission={permissionForm === "new" ? undefined : permissionForm}
+          platoons={data.settings.platoons}
+          onClose={() => setPermissionForm(null)}
+          onSave={(input) => {
+            const records =
+              permissionForm === "new"
+                ? [...permissionInputs(data.permissions), input]
+                : permissionInputs(data.permissions).map((permission) =>
+                    permission.email === permissionForm.email
+                      ? input
+                      : permission,
+                  );
+            onSavePermissions(records);
+            setPermissionForm(null);
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+function PermissionFormModal({
+  permission,
+  platoons,
+  onClose,
+  onSave,
+}: {
+  permission?: PermissionRecord;
+  platoons: string[];
+  onClose: () => void;
+  onSave: (permission: PermissionInput) => void;
+}) {
+  const [email, setEmail] = useState(permission?.email || "");
+  const [admin, setAdmin] = useState(permission?.admin || false);
+  const [equipmentScope, setEquipmentScope] = useState<
+    PermissionInput["equipmentScope"]
+  >(
+    permission?.equipmentScope || "הכל",
+  );
+  const [selectedPlatoons, setSelectedPlatoons] = useState(
+    new Set(permission?.platoons || []),
+  );
+  return (
+    <Modal
+      title={permission ? "עריכת הרשאה" : "הוספת הרשאה"}
+      onClose={onClose}
+    >
+      <form
+        className="stack-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave({
+            email,
+            admin,
+            equipmentScope: admin ? "הכל" : equipmentScope,
+            platoons: admin ? [] : [...selectedPlatoons],
+          });
+        }}
+      >
+        <Field label="אימייל Google">
+          <input
+            required
+            type="email"
+            dir="ltr"
+            disabled={Boolean(permission)}
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </Field>
+        <Field label="היקף ציוד">
+          <select
+            disabled={admin}
+            value={equipmentScope}
+            onChange={(event) =>
+              setEquipmentScope(
+                event.target.value as PermissionInput["equipmentScope"],
+              )
+            }
+          >
+            {EQUIPMENT_SCOPES.map((scope) => (
+              <option key={scope}>{scope}</option>
+            ))}
+          </select>
+        </Field>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={admin}
+            onChange={(event) => setAdmin(event.target.checked)}
+          />
+          מנהל
+        </label>
+        <fieldset className="permission-platoons" disabled={admin}>
+          <legend>מחלקות — ללא בחירה פירושו כל המחלקות</legend>
+          {platoons.map((platoon) => (
+            <label className="check" key={platoon}>
+              <input
+                type="checkbox"
+                checked={selectedPlatoons.has(platoon)}
+                onChange={(event) => {
+                  const next = new Set(selectedPlatoons);
+                  if (event.target.checked) next.add(platoon);
+                  else next.delete(platoon);
+                  setSelectedPlatoons(next);
+                }}
+              />
+              {platoon}
+            </label>
+          ))}
+        </fieldset>
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            ביטול
+          </button>
+          <button className="primary-button">שמירה</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -3300,14 +3567,18 @@ function SoldierDetail({
 
 function CatalogDetail({
   data,
+  stockHoldings,
   item,
   editable,
+  canManageStock,
   onClose,
   onAction,
 }: {
   data: CompanyData;
+  stockHoldings: CompanyData["holdings"];
   item: CatalogItem;
   editable: boolean;
+  canManageStock: boolean;
   onClose: () => void;
   onAction: (action: Action) => void;
 }) {
@@ -3334,10 +3605,10 @@ function CatalogDetail({
           מלאי <strong>{item.totalStock}</strong>
         </span>
         <span>
-          מוחזק <strong>{issuedQuantity(item, data.holdings)}</strong>
+          מוחזק <strong>{issuedQuantity(item, stockHoldings)}</strong>
         </span>
         <span>
-          זמין <strong>{availableQuantity(item, data.holdings)}</strong>
+          זמין <strong>{availableQuantity(item, stockHoldings)}</strong>
         </span>
       </div>
       {editable && (
@@ -3348,12 +3619,14 @@ function CatalogDetail({
           >
             החתמה
           </button>
-          <button
-            className="secondary-button"
-            onClick={() => onAction({ kind: "stock", item })}
-          >
-            עדכון מלאי
-          </button>
+          {canManageStock && (
+            <button
+              className="secondary-button"
+              onClick={() => onAction({ kind: "stock", item })}
+            >
+              עדכון מלאי
+            </button>
+          )}
         </div>
       )}
       <h3>מחזיקים</h3>

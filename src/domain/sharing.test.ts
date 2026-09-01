@@ -75,6 +75,7 @@ const data = {
   ],
   movements: [],
   signatures: [],
+  permissions: [],
   settings: { platoons: ["א", "ב"], schemaVersion: "2" },
   meta: {
     spreadsheetId: "x",

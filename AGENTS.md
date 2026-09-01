@@ -1,15 +1,15 @@
-# Tzelem Beta — Project Instructions
+# Matash (מת״ש) — Project Instructions
 
 ## Product purpose
 
-Tzelem Beta is a Hebrew, RTL, mobile-first web app for managing numbered and quantity-based company equipment. Google Sheets is the system of record. The primary users are company personnel working mainly from mobile phones.
+Matash (מת״ש) is a Hebrew, RTL, mobile-first web app for managing numbered and quantity-based company equipment. Google Sheets is the system of record. The primary users are company personnel working mainly from mobile phones.
 
-The product name shown in the UI is **ציוד פלוגתי**.
+The product name shown in the UI is **מת״ש**, with the subtitle **ניהול ציוד פלוגתי**.
 
 ## Reference implementation
 
 - Reuse the modern React/Vite application shell, visual language, colors, and interaction patterns from `/Users/meirrotstein/code/shavzak-beta/app`.
-- Reuse the Shavzak logo asset alongside the Tzelem product title.
+- Reuse the Shavzak logo asset alongside the Matash product title.
 - Keep this project standalone; do not modify `shavzak-beta` unless explicitly requested.
 - Preserve static-hosting compatibility (including GitHub Pages and a relative Vite base).
 
@@ -98,25 +98,44 @@ Required tabs and columns:
 
 Each signing session has one signature row. `פרטי ההחתמה` is a JSON snapshot of exactly the changes approved by the soldier, and `נתוני חתימה` contains normalized signature strokes as validated JSON. Relate the signature to its movement rows through the shared timestamp and soldier personal number; do not add an opaque session ID. Render signature data only through the canvas implementation after validation, never as injected HTML. Normal app loading must read only the signature index columns (`A:D` and `G`); fetch `E:F` for one validated row only after the user requests to view that signature, and cache the result in memory.
 
+### `הרשאות`
+
+1. `אימייל`
+2. `מנהל`
+3. `היקף ציוד`
+4. `מחלקות`
+
+`אימייל` is the signed-in Google email and must be unique case-insensitively. `היקף ציוד` is one of `צל״מ`, `כמותי`, or `הכל`. `מחלקות` is a comma-separated list; blank means all platoons. A user without a permissions row receives all platoons and both equipment methods but is not an admin. Admins bypass operational scopes. The first admin must be inserted manually in the sheet.
+
 ### `הגדרות`
 
-Contains platoons and `schema_version` (currently `3`). Equipment types and optional characteristics are managed in `קטלוג`.
+Contains platoons and `schema_version` (currently `4`). Equipment types and optional characteristics are managed in `קטלוג`.
 
 Keep the schema definition centralized in code. Reads and writes must target headers by the validated contract rather than relying on unexplained numeric offsets throughout the UI.
 
 ## Spreadsheet initialization and compatibility
 
 - Inspect spreadsheet metadata and relevant bounded ranges before any write.
-- Offer **הכנת הגיליון לציוד פלוגתי** only when the spreadsheet is truly empty and the signed-in user can edit it.
-- Setup must require explicit user confirmation before creating the seven tabs and their headers.
+- Offer **הכנת הגיליון למת״ש** only when the spreadsheet is truly empty and the signed-in user can edit it.
+- Setup must require explicit user confirmation before creating the eight tabs and their headers.
 - Never treat a non-empty spreadsheet as empty merely because expected tabs are missing.
 - Treat a structural difference as safely upgradeable only when it can be resolved by adding a required missing tab or adding required trailing columns whose existing headers still match in order. Show the exact additions and offer editors an explicit **השלמת מבנה הגיליון** action. Apply all additions and the schema-version update in one Sheets batch; never delete, move, rename, or overwrite existing data.
-- If a non-empty spreadsheet has reordered, renamed, conflicting, or otherwise incompatible headers, do not create, migrate, rename, delete, or rewrite tabs. Show a distinct incompatibility message, for example: **מבנה הגיליון אינו תואם לציוד פלוגתי. לא בוצעו שינויים.**
+- If a non-empty spreadsheet has reordered, renamed, conflicting, or otherwise incompatible headers, do not create, migrate, rename, delete, or rewrite tabs. Show a distinct incompatibility message, for example: **מבנה הגיליון אינו תואם למת״ש. לא בוצעו שינויים.**
 - The incompatibility or additive-update view should identify the exact missing tabs, columns, or incorrect headers so the user can act deliberately.
 - A reader opening an empty spreadsheet must not be offered a write action; explain that an editor must prepare it.
 - Do not implement migration or import from older schemas.
 
 ## Domain rules
+
+### Authorization
+
+- Restrict both UI visibility and repository writes by the signed-in email's resolved permission.
+- Platoon-scoped users may see and operate only on soldiers, assignments, movements, and signatures belonging to their permitted platoons. Unassigned equipment remains visible when its management method is permitted so it can be issued.
+- Equipment scope is `צל״מ`, `כמותי`, or `הכל`; hide and block the other management method.
+- Only admins may access settings, manage permissions or platoons, manage catalog types, or adjust quantity stock.
+- A permitted non-admin may add, edit, remove/reactivate, assign, return, transfer, and change status for numbered `צל״מ` within scope.
+- Re-resolve and enforce permissions immediately before every write. UI hiding is not sufficient authorization.
+- Never expose permission-management history to non-admin users.
 
 - One equipment item may have at most one current soldier.
 - One soldier may hold multiple equipment items.
@@ -207,7 +226,8 @@ Prominent actions:
 
 ### Settings
 
-- Manage platoons only. Catalog and equipment-type management belong exclusively in `מלאי`; do not duplicate catalog controls in `הגדרות`.
+- The entire screen is admin-only. Manage platoons and the `הרשאות` table here. Catalog and equipment-type management belong exclusively in `מלאי`; do not duplicate catalog controls in `הגדרות`.
+- Permission management supports add, edit, and removal, but must retain at least one admin. Clearly warn that removing a user's row restores the default full operational scope without admin rights.
 - Do not allow removing a managed value while active records still reference it; archive or retain it instead.
 
 ## Search and filtering
