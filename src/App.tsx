@@ -268,9 +268,13 @@ export function App() {
   const [numberedForm, setNumberedForm] = useState<NumberedItem | "new" | null>(
     null,
   );
+  const [numberedFormOrigin, setNumberedFormOrigin] = useState<
+    "signings" | null
+  >(null);
   const [action, setAction] = useState<Action>(null);
   const [signingSeed, setSigningSeed] = useState<SigningSeed | null>(null);
   const [signingSoldier, setSigningSoldier] = useState<Soldier | null>(null);
+  const [signingDirty, setSigningDirty] = useState(false);
   const [soldierDetail, setSoldierDetail] = useState<Soldier | null>(null);
   const [catalogDetail, setCatalogDetail] = useState<CatalogItem | null>(null);
   const [movementShareSoldier, setMovementShareSoldier] =
@@ -326,6 +330,28 @@ export function App() {
     setSigningSeed(seed);
     setSigningSoldier(soldier);
     setView("signings");
+  }
+
+  function navigateToView(nextView: View) {
+    if (nextView === view) return;
+    const navigate = () => {
+      setSigningSeed(null);
+      setSigningSoldier(null);
+      setSigningDirty(false);
+      setView(nextView);
+    };
+    if (view === "signings" && signingDirty) {
+      setConfirmation({
+        title: "יציאה ללא שמירה",
+        message:
+          "יש שינויים בהחתמה שעדיין לא נשמרו. מעבר למסך אחר יאבד את השינויים.",
+        confirmLabel: "יציאה ללא שמירה",
+        danger: true,
+        onConfirm: navigate,
+      });
+      return;
+    }
+    navigate();
   }
 
   function handleInventoryAction(nextAction: Exclude<Action, null>) {
@@ -737,7 +763,10 @@ export function App() {
             access={access}
             onView={setView}
             onAddSoldier={() => setSoldierForm("new")}
-            onAddNumbered={() => setNumberedForm("new")}
+            onAddNumbered={() => {
+              setNumberedFormOrigin(null);
+              setNumberedForm("new");
+            }}
             onIssue={() => openSignings()}
           />
         )}
@@ -782,10 +811,25 @@ export function App() {
             canAddCatalogType={hasAllPlatoons(access)}
             canAddNumberedItem={canAccessMethod(access, "צל״מ")}
             onAddCatalogType={() => setCatalogForm("new")}
-            onAddNumberedItem={() => setNumberedForm("new")}
+            onAddNumberedItem={() => {
+              setNumberedFormOrigin("signings");
+              setNumberedForm("new");
+            }}
             initialSoldier={signingSoldier}
             initialItem={signingSeed}
             onInitialItemApplied={() => setSigningSeed(null)}
+            onDirtyChange={setSigningDirty}
+            onRequestDiscard={(onConfirm) =>
+              setConfirmation({
+                title: "יציאה ללא שמירה",
+                message:
+                  "יש שינויים בהחתמה שעדיין לא נשמרו. המשך הפעולה יאבד את השינויים.",
+                confirmLabel: "יציאה ללא שמירה",
+                danger: true,
+                onConfirm,
+              })
+            }
+            onRequestConfirmation={setConfirmation}
             onSave={async (soldier, input) => {
               let movements: MovementEntry[] = [];
               const ok = await mutate(async (current, repository) => {
@@ -795,7 +839,10 @@ export function App() {
                   input,
                 );
               }, "ההחתמה נשמרה");
-              if (ok) setSigningReceipt({ soldier, movements });
+              if (ok) {
+                setSigningDirty(false);
+                setSigningReceipt({ soldier, movements });
+              }
               return ok;
             }}
           />
@@ -807,10 +854,16 @@ export function App() {
             editable={data.meta.editable}
             access={access}
             onAddCatalog={() => setCatalogForm("new")}
-            onAddNumbered={() => setNumberedForm("new")}
+            onAddNumbered={() => {
+              setNumberedFormOrigin(null);
+              setNumberedForm("new");
+            }}
             onCatalog={setCatalogDetail}
             onCatalogEdit={setCatalogForm}
-            onNumberedEdit={setNumberedForm}
+            onNumberedEdit={(item) => {
+              setNumberedFormOrigin(null);
+              setNumberedForm(item);
+            }}
             onAction={handleInventoryAction}
             onCatalogToggle={(item) => {
               const issue = item.active
@@ -900,9 +953,7 @@ export function App() {
             key={id}
             className={view === id ? "active" : ""}
             onClick={() => {
-              setSigningSeed(null);
-              setSigningSoldier(null);
-              setView(id);
+              navigateToView(id);
             }}
           >
             {label}
@@ -966,7 +1017,10 @@ export function App() {
           }}
           item={numberedForm === "new" ? undefined : numberedForm}
           saving={saving}
-          onClose={() => setNumberedForm(null)}
+          onClose={() => {
+            setNumberedForm(null);
+            setNumberedFormOrigin(null);
+          }}
           onSave={async (type, variant, number, location, note) => {
             const input = {
               type,
@@ -983,7 +1037,29 @@ export function App() {
                   : repository.editNumberedItem(current, numberedForm, input),
               numberedForm === "new" ? "הפריט נוסף" : "הפריט נשמר",
             );
-            if (ok) setNumberedForm(null);
+            if (ok) {
+              if (
+                numberedForm === "new" &&
+                numberedFormOrigin === "signings"
+              ) {
+                setSigningSeed({
+                  kind: "numbered",
+                  item: {
+                    row: 0,
+                    type,
+                    variant,
+                    number,
+                    status: "זמין",
+                    assignedTo: "",
+                    location,
+                    note,
+                    active: true,
+                  },
+                });
+              }
+              setNumberedForm(null);
+              setNumberedFormOrigin(null);
+            }
           }}
         />
       )}
@@ -1534,6 +1610,9 @@ function SigningsView({
   initialSoldier,
   initialItem,
   onInitialItemApplied,
+  onDirtyChange,
+  onRequestDiscard,
+  onRequestConfirmation,
   onSave,
 }: {
   data: CompanyData;
@@ -1546,6 +1625,9 @@ function SigningsView({
   initialSoldier: Soldier | null;
   initialItem: SigningSeed | null;
   onInitialItemApplied: () => void;
+  onDirtyChange: (dirty: boolean) => void;
+  onRequestDiscard: (onConfirm: () => void) => void;
+  onRequestConfirmation: (request: ConfirmationRequest) => void;
   onSave: (soldier: Soldier, input: SigningSessionInput) => Promise<boolean>;
 }) {
   const [query, setQuery] = useState("");
@@ -1554,7 +1636,7 @@ function SigningsView({
   const [selectedNumbered, setSelectedNumbered] = useState<Set<string>>(
     new Set(),
   );
-  const [quantityValues, setQuantityValues] = useState<Record<string, number>>(
+  const [quantityValues, setQuantityValues] = useState<Record<string, string>>(
     {},
   );
   const [numberedToAdd, setNumberedToAdd] = useState("");
@@ -1623,7 +1705,7 @@ function SigningsView({
         )
         .map((holding) => [
           catalogKey(holding.type, holding.variant),
-          holding.quantity,
+          String(holding.quantity),
         ]),
     );
     if (pendingInitialItem?.kind === "numbered") {
@@ -1657,7 +1739,7 @@ function SigningsView({
         availableQuantity(seededItem, data.holdings) > 0
       ) {
         const key = catalogKey(seededItem.type, seededItem.variant);
-        nextQuantities[key] = (nextQuantities[key] || 0) + 1;
+        nextQuantities[key] = String(Number(nextQuantities[key] || 0) + 1);
       }
     }
     setSelectedNumbered(nextNumbered);
@@ -1670,6 +1752,80 @@ function SigningsView({
     setQuantityToAdd("");
     setAddQuantity("1");
   }, [selectedSoldier?.personalNumber]);
+
+  useEffect(() => {
+    if (!initialItem || !selectedSoldier) return;
+    if (initialItem.kind === "numbered") {
+      const createdItem = data.numberedItems.find(
+        (item) =>
+          numberedItemKey(item.type, item.number) ===
+          numberedItemKey(initialItem.item.type, initialItem.item.number),
+      );
+      if (
+        createdItem?.active &&
+        createdItem.status === "זמין" &&
+        !createdItem.assignedTo
+      ) {
+        setSelectedNumbered((current) =>
+          new Set([
+            ...current,
+            numberedItemKey(createdItem.type, createdItem.number),
+          ]),
+        );
+      }
+    }
+    setPendingInitialItem(null);
+    onInitialItemApplied();
+  }, [
+    data.numberedItems,
+    initialItem,
+    onInitialItemApplied,
+    selectedSoldier,
+  ]);
+
+  const hasDraftChanges = useMemo(() => {
+    if (!selectedSoldier) return false;
+    const currentNumberedKeys = new Set(
+      data.numberedItems
+        .filter(
+          (item) =>
+            item.active && item.assignedTo === selectedSoldier.personalNumber,
+        )
+        .map((item) => numberedItemKey(item.type, item.number)),
+    );
+    if (
+      currentNumberedKeys.size !== selectedNumbered.size ||
+      [...currentNumberedKeys].some((key) => !selectedNumbered.has(key))
+    )
+      return true;
+    return activeCatalogItemsForMethod(data.catalog, "כמותי").some((item) => {
+      const key = catalogKey(item.type, item.variant);
+      const current =
+        data.holdings.find(
+          (holding) =>
+            holding.personalNumber === selectedSoldier.personalNumber &&
+            catalogKey(holding.type, holding.variant) === key,
+        )?.quantity || 0;
+      return Number(quantityValues[key] ?? 0) !== current;
+    });
+  }, [
+    data.catalog,
+    data.holdings,
+    data.numberedItems,
+    quantityValues,
+    selectedNumbered,
+    selectedSoldier,
+  ]);
+
+  useEffect(() => {
+    onDirtyChange(hasDraftChanges);
+  }, [hasDraftChanges, onDirtyChange]);
+  useEffect(
+    () => () => {
+      onDirtyChange(false);
+    },
+    [onDirtyChange],
+  );
 
   if (!selectedSoldier) {
     return (
@@ -1747,13 +1903,28 @@ function SigningsView({
   const quantityTargets = quantityCatalog
     .map((item) => ({
       item,
-      quantity: quantityValues[catalogKey(item.type, item.variant)] || 0,
+      quantity: Number(
+        quantityValues[catalogKey(item.type, item.variant)] ?? 0,
+      ),
     }))
     .filter((target) => target.quantity !== currentQuantity(target.item));
+  const hasInvalidQuantityValue = quantityCatalog.some((item) => {
+    const key = catalogKey(item.type, item.variant);
+    if (!Object.hasOwn(quantityValues, key)) return false;
+    const raw = quantityValues[key];
+    const value = Number(raw);
+    return (
+      raw === "" ||
+      !Number.isInteger(value) ||
+      value < 0 ||
+      value > currentQuantity(item) + availableQuantity(item, data.holdings)
+    );
+  });
   const changeCount =
     numberedToAssign.length + numberedToReturn.length + quantityTargets.length;
   const displayedQuantityItems = quantityCatalog.filter(
-    (item) => (quantityValues[catalogKey(item.type, item.variant)] || 0) > 0,
+    (item) =>
+      Object.hasOwn(quantityValues, catalogKey(item.type, item.variant)),
   );
   const quantityAddItem = quantityCatalog.find(
     (item) => catalogKey(item.type, item.variant) === quantityToAdd,
@@ -1774,13 +1945,19 @@ function SigningsView({
         </div>
         <button
           type="button"
-          className="secondary-button"
+          className="icon-button"
+          title="סגירת ההחתמה ובחירת חייל אחר"
+          aria-label="סגירת ההחתמה ובחירת חייל אחר"
           onClick={() => {
-            setSelectedSoldier(null);
-            setQuery("");
+            const replaceSoldier = () => {
+              setSelectedSoldier(null);
+              setQuery("");
+            };
+            if (hasDraftChanges) onRequestDiscard(replaceSoldier);
+            else replaceSoldier();
           }}
         >
-          החלפת חייל
+          ×
         </button>
       </div>
 
@@ -1803,9 +1980,17 @@ function SigningsView({
                   type="button"
                   className="small-button danger-text"
                   onClick={() => {
-                    const next = new Set(selectedNumbered);
-                    next.delete(numberedItemKey(item.type, item.number));
-                    setSelectedNumbered(next);
+                    onRequestConfirmation({
+                      title: "הסרת פריט מההחתמה",
+                      message: `להסיר את ${itemLabel(item.type, item.variant)} מספר ${item.number} מטיוטת ההחתמה?`,
+                      confirmLabel: "הסרה מההחתמה",
+                      danger: true,
+                      onConfirm: () => {
+                        const next = new Set(selectedNumbered);
+                        next.delete(numberedItemKey(item.type, item.number));
+                        setSelectedNumbered(next);
+                      },
+                    });
                   }}
                 >
                   הסרה
@@ -1834,11 +2019,11 @@ function SigningsView({
                         availableQuantity(item, data.holdings)
                       }
                       step="1"
-                      value={quantityValues[key] || 0}
+                      value={quantityValues[key] ?? ""}
                       onChange={(event) =>
                         setQuantityValues((current) => ({
                           ...current,
-                          [key]: Math.max(0, Number(event.target.value) || 0),
+                          [key]: event.target.value,
                         }))
                       }
                     />
@@ -1846,10 +2031,18 @@ function SigningsView({
                       type="button"
                       className="small-button danger-text"
                       onClick={() =>
-                        setQuantityValues((current) => ({
-                          ...current,
-                          [key]: 0,
-                        }))
+                        onRequestConfirmation({
+                          title: "הסרת ציוד מההחתמה",
+                          message: `להסיר את ${itemLabel(item.type, item.variant, item.variantLabel)} מטיוטת ההחתמה?`,
+                          confirmLabel: "הסרה מההחתמה",
+                          danger: true,
+                          onConfirm: () =>
+                            setQuantityValues((current) => {
+                              const next = { ...current };
+                              delete next[key];
+                              return next;
+                            }),
+                        })
                       }
                     >
                       הסרה
@@ -1942,9 +2135,12 @@ function SigningsView({
                     availableQuantity(quantityAddItem, data.holdings);
                   setQuantityValues((current) => ({
                     ...current,
-                    [quantityToAdd]: Math.min(
-                      maximum,
-                      (current[quantityToAdd] || 0) + addQuantityNumber,
+                    [quantityToAdd]: String(
+                      Math.min(
+                        maximum,
+                        Number(current[quantityToAdd] || 0) +
+                          addQuantityNumber,
+                      ),
                     ),
                   }));
                   setQuantityToAdd("");
@@ -1995,7 +2191,9 @@ function SigningsView({
         </span>
         <button
           className="primary-button"
-          disabled={!editable || saving || !changeCount}
+          disabled={
+            !editable || saving || !changeCount || hasInvalidQuantityValue
+          }
           onClick={() =>
             setPendingSigning({
               numberedToAssign,
@@ -2007,6 +2205,11 @@ function SigningsView({
           שמירת ההחתמה
         </button>
       </div>
+      {hasInvalidQuantityValue && (
+        <p className="form-error" role="alert">
+          יש להזין כמות תקינה לפני שמירת ההחתמה.
+        </p>
+      )}
       {pendingSigning && (
         <SignatureModal
           soldier={selectedSoldier}

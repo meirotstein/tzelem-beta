@@ -188,9 +188,13 @@ For operations that update current state and append history, minimize partial wr
 - Provide a dedicated `החתמות` section with fuzzy soldier search across name, personal number, phone, and platoon.
 - After selecting a soldier, show the complete current signed-equipment state: every assigned `צל״מ` item and every positive quantity holding.
 - Treat edits as a local draft. Allow removing `צל״מ`, changing or zeroing quantities, and adding available `צל״מ` or quantity equipment.
+- Keep a quantity item visible while its numeric input is temporarily empty, show inline validation, and block saving until a valid whole quantity is entered.
+- Track whether the signing draft differs from the soldier's current holdings. Before navigating to another screen or replacing the selected soldier, use the app confirmation modal to warn that unsaved changes will be lost.
+- Confirm before removing any numbered or quantity item from the signing draft, even though the draft has not yet been saved.
 - Label equipment-addition actions `הוספה להחתמה` so they are not confused with creating inventory records.
 - Quantity-to-add inputs must allow temporarily empty text while editing and validate a positive integer only when applying the addition.
 - Title the draft-addition section `הוספת ציוד להחתמה`. Below it, expose the permitted `סוג ציוד חדש` and `פריט צל״מ חדש` inventory actions using the same modals as the inventory screen. Saving those modals must refresh their option lists without resetting the in-progress signing draft.
+- When a new numbered `צל״מ` item is created from the signing screen, add the newly created available item directly to the selected soldier's signing draft after the background refresh succeeds.
 - Pressing `שמירת ההחתמה` opens a required finger-signature canvas and does not write yet. Allow clearing or cancelling the signature.
 - Save only after a meaningful signature is present. Save the complete draft as one atomic Sheets batch containing all current-state updates, matching movement rows, the exact operation snapshot, and the normalized signature strokes. Do not write each edit as it is made.
 - After a successful save, show a WhatsApp confirmation containing exactly the changes in that signing session and the action performer. Use the soldier's phone when present; otherwise open the contact picker.
