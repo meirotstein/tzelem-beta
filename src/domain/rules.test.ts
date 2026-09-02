@@ -4,6 +4,8 @@ import {
   availableQuantity,
   canRemoveCatalogItem,
   canRemoveSoldier,
+  catalogActualQuantity,
+  catalogStandardGap,
   fuzzyScore,
   soldiersWithoutEquipment,
   validateCatalogInput,
@@ -40,6 +42,7 @@ const numbered: NumberedItem = {
   number: "123",
   status: "משויך",
   assignedTo: "1",
+  location: "",
   note: "",
   active: true,
 };
@@ -50,6 +53,7 @@ const quantity: CatalogItem = {
   variantLabel: "מידה",
   method: "כמותי",
   totalStock: 10,
+  location: "",
   note: "",
   active: true,
 };
@@ -93,10 +97,35 @@ describe("spreadsheet compatibility", () => {
         .map((schema) => [schema.title, [[...schema.headers]]]),
     );
     values["חיילים"] = [["שם", "מספר אישי", "מחלקה", "פעיל"]];
+    values["קטלוג"] = [[
+      "סוג",
+      "ערך מאפיין",
+      "שם מאפיין",
+      "שיטת ניהול",
+      "מלאי כולל",
+      "הערה",
+      "פעיל",
+      "מיקום",
+    ]];
+    values["פריטי צל״מ"] = [[
+      "סוג",
+      "ערך מאפיין",
+      "מספר מזהה",
+      "סטטוס",
+      "מספר אישי משויך",
+      "הערה",
+      "פעיל",
+    ]];
     const upgrade = additiveSchemaUpgrade(withoutSignatures, values);
     expect(upgrade?.missingSheets).toEqual(["חתימות"]);
     expect(upgrade?.missingColumns).toEqual([
       { sheetTitle: "חיילים", startColumn: 4, headers: ["טלפון"] },
+      {
+        sheetTitle: "קטלוג",
+        startColumn: 8,
+        headers: ["תקן"],
+      },
+      { sheetTitle: "פריטי צל״מ", startColumn: 7, headers: ["מיקום"] },
     ]);
   });
 
@@ -211,9 +240,13 @@ describe("domain invariants", () => {
       variantLabel: "",
       method: "כמותי" as const,
       totalStock: 20,
+      location: "",
       note: "",
     };
     expect(validateCatalogInput(input, [])).toHaveLength(0);
+    expect(
+      validateCatalogInput({ ...input, standard: -1 }, []),
+    ).toContain("התקן חייב להיות מספר שלם שאינו שלילי.");
     expect(validateCatalogInput({ ...input, variant: "M" }, [])).toContain(
       "יש למלא גם שם מאפיין וגם ערך מאפיין, או להשאיר את שניהם ריקים.",
     );
@@ -222,6 +255,22 @@ describe("domain invariants", () => {
         { ...quantity, type: input.type, variant: "" },
       ]),
     ).toContain("השילוב של סוג וערך מאפיין כבר קיים בקטלוג.");
+  });
+
+  it("calculates standard gaps for quantity and numbered equipment", () => {
+    expect(catalogStandardGap({ ...quantity, standard: 12 }, [])).toBe(2);
+    const numberedCatalog = {
+      ...quantity,
+      method: "צל״מ" as const,
+      type: "נשק",
+      variant: "",
+      standard: 2,
+    };
+    expect(catalogActualQuantity(numberedCatalog, [numbered])).toBe(1);
+    expect(catalogStandardGap(numberedCatalog, [numbered])).toBe(1);
+    expect(
+      catalogStandardGap({ ...numberedCatalog, standard: null }, []),
+    ).toBeNull();
   });
 
   it("returns only active catalog items for the requested management method", () => {

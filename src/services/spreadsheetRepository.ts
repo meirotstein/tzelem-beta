@@ -391,6 +391,7 @@ export class SpreadsheetRepository {
     this.ensureAllPlatoons(data);
     const errors = validateCatalogInput(input, data.catalog);
     if (errors.length) throw new Error(errors[0]);
+    this.ensureCatalogLocation(data, input);
     await this.batch([
       appendRow(this.sheetId(data, "catalog"), this.catalogRow(input, true)),
       this.movementRequest(data, {
@@ -399,7 +400,12 @@ export class SpreadsheetRepository {
         type: normalizeText(input.type),
         variant: normalizeText(input.variant),
         quantity: input.totalStock,
-        note: normalizeText(input.note),
+        note: [
+          input.standard == null ? "" : `תקן: ${input.standard}`,
+          normalizeText(input.note),
+        ]
+          .filter(Boolean)
+          .join(" · "),
       }),
     ]);
   }
@@ -424,6 +430,7 @@ export class SpreadsheetRepository {
     }
     const errors = validateCatalogInput(input, data.catalog, item);
     if (errors.length) throw new Error(errors[0]);
+    this.ensureCatalogLocation(data, input);
     if (
       input.method === "כמותי" &&
       input.totalStock < issuedQuantity(item, data.holdings)
@@ -440,7 +447,14 @@ export class SpreadsheetRepository {
         method: item.method,
         type: item.type,
         variant: item.variant,
-        note: normalizeText(input.note),
+        note: [
+          (input.standard ?? null) === (item.standard ?? null)
+            ? ""
+            : `תקן: ${item.standard ?? "לא הוגדר"} ← ${input.standard ?? "לא הוגדר"}`,
+          normalizeText(input.note),
+        ]
+          .filter(Boolean)
+          .join(" · "),
       }),
     ]);
   }
@@ -467,6 +481,8 @@ export class SpreadsheetRepository {
         item.totalStock,
         item.note,
         active,
+        item.location,
+        item.standard ?? "",
       ]),
       this.movementRequest(data, {
         action: active ? "הפעלת סוג ציוד" : "הסרת סוג ציוד",
@@ -497,6 +513,7 @@ export class SpreadsheetRepository {
       data.numberedItems,
     );
     if (errors.length) throw new Error(errors[0]);
+    this.ensureManagedLocation(data, input.location);
     await this.batch([
       appendRow(this.sheetId(data, "numberedItems"), [
         catalog.type,
@@ -506,6 +523,7 @@ export class SpreadsheetRepository {
         "",
         normalizeText(input.note),
         true,
+        normalizeText(input.location),
       ]),
       this.movementRequest(data, {
         action: "הוספת פריט צל״מ",
@@ -542,6 +560,7 @@ export class SpreadsheetRepository {
       item,
     );
     if (errors.length) throw new Error(errors[0]);
+    this.ensureManagedLocation(data, input.location);
     await this.batch([
       updateRow(this.sheetId(data, "numberedItems"), item.row, [
         item.type,
@@ -551,6 +570,7 @@ export class SpreadsheetRepository {
         item.assignedTo,
         normalizeText(input.note),
         item.active,
+        normalizeText(input.location),
       ]),
       this.movementRequest(data, {
         action: "עריכת פריט צל״מ",
@@ -584,6 +604,7 @@ export class SpreadsheetRepository {
         item.assignedTo,
         item.note,
         active,
+        item.location,
       ]),
       this.movementRequest(data, {
         action: active ? "הפעלת פריט צל״מ" : "הסרת פריט צל״מ",
@@ -622,6 +643,7 @@ export class SpreadsheetRepository {
         soldier.personalNumber,
         item.note,
         item.active,
+        item.location,
       ]),
       this.movementRequest(data, {
         action: item.assignedTo ? "העברה" : "החתמה",
@@ -656,6 +678,7 @@ export class SpreadsheetRepository {
         "",
         item.note,
         item.active,
+        item.location,
       ]),
       this.movementRequest(data, {
         action: "החזרה",
@@ -693,6 +716,7 @@ export class SpreadsheetRepository {
         item.assignedTo,
         normalizeText(note) || item.note,
         item.active,
+        item.location,
       ]),
       this.movementRequest(data, {
         action: "שינוי סטטוס",
@@ -883,6 +907,8 @@ export class SpreadsheetRepository {
         totalStock,
         item.note,
         item.active,
+        item.location,
+        item.standard ?? "",
       ]),
       this.movementRequest(data, {
         action: delta > 0 ? "הוספת מלאי" : "הפחתת מלאי",
@@ -942,6 +968,7 @@ export class SpreadsheetRepository {
           "",
           item.note,
           item.active,
+          item.location,
         ]),
       );
       drafts.push({
@@ -973,6 +1000,7 @@ export class SpreadsheetRepository {
           soldier.personalNumber,
           item.note,
           item.active,
+          item.location,
         ]),
       );
       drafts.push({
@@ -1128,6 +1156,9 @@ export class SpreadsheetRepository {
     const unique = [
       ...new Set(settings.platoons.map(normalizeText).filter(Boolean)),
     ];
+    const locations = [
+      ...new Set(settings.locations.map(normalizeText).filter(Boolean)),
+    ];
     const referencedPlatoons = new Set([
       ...data.soldiers.map((soldier) => soldier.platoon),
       ...data.permissions.flatMap((permission) => permission.platoons),
@@ -1139,10 +1170,27 @@ export class SpreadsheetRepository {
       throw new Error(
         `לא ניתן להסיר את מחלקה ${removedReferenced} כל עוד חיילים או הרשאות משתמשים בה.`,
       );
-    const rowCount = Math.max(data.settings.platoons.length, unique.length) + 2;
+    const removedLocation = [...data.catalog, ...data.numberedItems].find(
+      (item) => item.location && !locations.includes(item.location),
+    )?.location;
+    if (removedLocation)
+      throw new Error(
+        `לא ניתן להסיר את המיקום ${removedLocation} כל עוד ציוד משתמש בו.`,
+      );
+    const rowCount =
+      Math.max(
+        data.settings.platoons.length,
+        data.settings.locations.length,
+        unique.length,
+        locations.length,
+      ) + 2;
     const rows: CellPrimitive[][] = [[...SHEET_SCHEMAS.settings.headers]];
     for (let index = 0; index < rowCount - 2; index += 1)
-      rows.push([unique[index] || "", "", ""]);
+      rows.push([
+        unique[index] || "",
+        locations[index] ? "location" : "",
+        locations[index] || "",
+      ]);
     rows.push(["", "schema_version", SCHEMA_VERSION]);
     await this.batch([
       {
@@ -1159,8 +1207,8 @@ export class SpreadsheetRepository {
         },
       },
       this.movementRequest(data, {
-        action: "עדכון מחלקות",
-        note: unique.join(", "),
+        action: "עדכון הגדרות",
+        note: `מחלקות: ${unique.join(", ")} · מיקומים: ${locations.join(", ")}`,
       }),
     ]);
   }
@@ -1238,6 +1286,13 @@ export class SpreadsheetRepository {
         const method = normalizeText(row[3]);
         if (!isManagementMethod(method))
           throw new Error(`שיטת ניהול לא תקינה בקטלוג, שורה ${index + 2}.`);
+        const standardText = normalizeText(row[8]);
+        const standard = standardText === "" ? null : Number(standardText);
+        if (
+          standard != null &&
+          (!Number.isInteger(standard) || standard < 0)
+        )
+          throw new Error(`תקן לא תקין בקטלוג, שורה ${index + 2}.`);
         return {
           row: index + 2,
           type: normalizeText(row[0]),
@@ -1247,6 +1302,8 @@ export class SpreadsheetRepository {
           totalStock: asNonNegativeInteger(row[4]),
           note: normalizeText(row[5]),
           active: parseActive(row[6]),
+          location: normalizeText(row[7]),
+          standard,
         };
       })
       .filter((item) => item.type || item.variant);
@@ -1267,6 +1324,7 @@ export class SpreadsheetRepository {
           assignedTo: normalizeText(row[4]),
           note: normalizeText(row[5]),
           active: parseActive(row[6]),
+          location: normalizeText(row[7]),
         };
       })
       .filter((item) => item.type || item.number);
@@ -1354,6 +1412,14 @@ export class SpreadsheetRepository {
       platoons: [
         ...new Set(
           settingRows.map((row) => normalizeText(row[0])).filter(Boolean),
+        ),
+      ],
+      locations: [
+        ...new Set(
+          settingRows
+            .filter((row) => normalizeText(row[1]) === "location")
+            .map((row) => normalizeText(row[2]))
+            .filter(Boolean),
         ),
       ],
       schemaVersion: normalizeText(
@@ -1468,7 +1534,23 @@ export class SpreadsheetRepository {
       input.method === "כמותי" ? input.totalStock : 0,
       normalizeText(input.note),
       active,
+      input.method === "כמותי" ? normalizeText(input.location) : "",
+      input.standard ?? "",
     ];
+  }
+
+  private ensureCatalogLocation(data: CompanyData, input: CatalogInput) {
+    const location = normalizeText(input.location);
+    if (input.method !== "כמותי" && location)
+      throw new Error("מיקום זמין לציוד כמותי בלבד.");
+    if (location && !data.settings.locations.includes(location))
+      throw new Error("יש לבחור מיקום מרשימת המיקומים בהגדרות.");
+  }
+
+  private ensureManagedLocation(data: CompanyData, locationValue: string) {
+    const location = normalizeText(locationValue);
+    if (location && !data.settings.locations.includes(location))
+      throw new Error("יש לבחור מיקום מרשימת המיקומים בהגדרות.");
   }
 
   private currentNumberedItem(

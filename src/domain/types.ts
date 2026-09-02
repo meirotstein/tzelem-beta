@@ -29,6 +29,8 @@ export interface CatalogItem {
   variantLabel: string;
   method: ManagementMethod;
   totalStock: number;
+  location: string;
+  standard?: number | null;
   note: string;
   active: boolean;
 }
@@ -40,6 +42,7 @@ export interface NumberedItem {
   number: string;
   status: EquipmentStatus;
   assignedTo: string;
+  location: string;
   note: string;
   active: boolean;
 }
@@ -106,6 +109,7 @@ export interface SignatureRecord extends SignatureSummary {
 
 export interface ManagedSettings {
   platoons: string[];
+  locations: string[];
   schemaVersion: string;
 }
 
@@ -193,6 +197,8 @@ export interface CatalogInput {
   variantLabel: string;
   method: ManagementMethod;
   totalStock: number;
+  location: string;
+  standard?: number | null;
   note: string;
   active?: boolean;
 }
@@ -203,6 +209,7 @@ export interface NumberedItemInput {
   number: string;
   status: EquipmentStatus;
   assignedTo?: string;
+  location: string;
   note: string;
   active?: boolean;
 }

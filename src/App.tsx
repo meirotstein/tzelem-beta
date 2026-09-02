@@ -14,6 +14,7 @@ import {
   canRemoveCatalogItem,
   canRemoveNumberedItem,
   canRemoveSoldier,
+  catalogActualQuantity,
   fuzzyScore,
   holdingsForSoldier,
   issuedQuantity,
@@ -102,6 +103,13 @@ type SignatureViewerState = {
   loading: boolean;
   error: string;
 };
+type ConfirmationRequest = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger?: boolean;
+  onConfirm: () => void;
+};
 
 const auth = new GoogleAuthService();
 const idFromValue = (value: string) =>
@@ -178,6 +186,59 @@ function Modal({
     </div>
   );
 }
+
+function ConfirmDialog({
+  request,
+  onClose,
+}: {
+  request: ConfirmationRequest;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title={request.title} onClose={onClose}>
+      <p className="confirmation-message">{request.message}</p>
+      <div className="modal-actions">
+        <button type="button" className="secondary-button" onClick={onClose}>
+          ביטול
+        </button>
+        <button
+          type="button"
+          className={request.danger ? "danger-button" : "primary-button"}
+          onClick={() => {
+            onClose();
+            request.onConfirm();
+          }}
+        >
+          {request.confirmLabel}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function ToastMessage({
+  error,
+  notice,
+  onClose,
+}: {
+  error: string;
+  notice: string;
+  onClose: () => void;
+}) {
+  if (!error && !notice) return null;
+  return (
+    <div
+      className={`toast ${error ? "error" : "success"}`}
+      role={error ? "alert" : "status"}
+      aria-live={error ? "assertive" : "polite"}
+    >
+      <span>{error || notice}</span>
+      <button onClick={onClose} aria-label="סגירה">
+        ×
+      </button>
+    </div>
+  );
+}
 const Field = ({ label, children }: { label: string; children: ReactNode }) => (
   <label className="field">
     <span>{label}</span>
@@ -196,6 +257,8 @@ export function App() {
   const [view, setView] = useState<View>("dashboard");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [confirmation, setConfirmation] =
+    useState<ConfirmationRequest | null>(null);
   const [saving, setSaving] = useState(false);
   const [signedInName, setSignedInName] = useState("");
   const [soldierForm, setSoldierForm] = useState<Soldier | "new" | null>(null);
@@ -207,6 +270,7 @@ export function App() {
   );
   const [action, setAction] = useState<Action>(null);
   const [signingSeed, setSigningSeed] = useState<SigningSeed | null>(null);
+  const [signingSoldier, setSigningSoldier] = useState<Soldier | null>(null);
   const [soldierDetail, setSoldierDetail] = useState<Soldier | null>(null);
   const [catalogDetail, setCatalogDetail] = useState<CatalogItem | null>(null);
   const [movementShareSoldier, setMovementShareSoldier] =
@@ -218,6 +282,18 @@ export function App() {
   const [signatureViewer, setSignatureViewer] =
     useState<SignatureViewerState | null>(null);
   const signatureCache = useRef(new Map<string, SignatureRecord>());
+
+  useEffect(() => {
+    if (appState !== "result" || (!error && !notice)) return;
+    const timeout = window.setTimeout(
+      () => {
+        setError("");
+        setNotice("");
+      },
+      error ? 10000 : 5000,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [appState, error, notice]);
 
   const data = result?.kind === "ready" ? result.data : null;
   const access = useMemo(
@@ -243,8 +319,12 @@ export function App() {
     [spreadsheetId],
   );
 
-  function openSignings(seed: SigningSeed | null = null) {
+  function openSignings(
+    seed: SigningSeed | null = null,
+    soldier: Soldier | null = null,
+  ) {
     setSigningSeed(seed);
+    setSigningSoldier(soldier);
     setView("signings");
   }
 
@@ -362,12 +442,6 @@ export function App() {
 
   async function initializeSheet() {
     if (!repo || result?.kind !== "empty") return;
-    if (
-      !window.confirm(
-        "להכין את הגיליון הריק למת״ש? הפעולה תיצור את הלשוניות והכותרות הנדרשות.",
-      )
-    )
-      return;
     try {
       setSaving(true);
       await repo.initializeEmptyWorkbook(result.meta);
@@ -382,12 +456,6 @@ export function App() {
 
   async function upgradeSheetStructure() {
     if (!repo || result?.kind !== "upgradeable") return;
-    if (
-      !window.confirm(
-        "להוסיף לגיליון את הלשוניות והעמודות החסרות? נתונים קיימים לא יימחקו או יועברו.",
-      )
-    )
-      return;
     try {
       setSaving(true);
       setError("");
@@ -473,6 +541,23 @@ export function App() {
     }
   }
 
+  const confirmationDialog = confirmation && (
+    <ConfirmDialog
+      request={confirmation}
+      onClose={() => setConfirmation(null)}
+    />
+  );
+  const toast = (
+    <ToastMessage
+      error={error}
+      notice={notice}
+      onClose={() => {
+        setError("");
+        setNotice("");
+      }}
+    />
+  );
+
   if (appState === "booting" || appState === "loading")
     return <Splash text="טוען…" />;
   if (appState === "signed-out")
@@ -508,15 +593,24 @@ export function App() {
   if (!result) return null;
   if (result.kind === "empty")
     return (
-      <ShellHeader name={signedInName} onSignOut={signOut}>
-        <main className="center-card">
+      <>
+        <ShellHeader name={signedInName} onSignOut={signOut}>
+          <main className="center-card">
           <h2>הגיליון ריק</h2>
           <p>ניתן להכין אותו כמערכת מת״ש חדשה.</p>
           {result.meta.editable ? (
             <button
               className="primary-button"
               disabled={saving}
-              onClick={() => void initializeSheet()}
+              onClick={() =>
+                setConfirmation({
+                  title: "הכנת הגיליון",
+                  message:
+                    "להכין את הגיליון הריק למת״ש? הפעולה תיצור את הלשוניות והכותרות הנדרשות.",
+                  confirmLabel: "הכנת הגיליון",
+                  onConfirm: () => void initializeSheet(),
+                })
+              }
             >
               הכנת הגיליון למת״ש
             </button>
@@ -531,23 +625,22 @@ export function App() {
           >
             בחירת גיליון אחר
           </button>
-        </main>
-      </ShellHeader>
+          </main>
+        </ShellHeader>
+        {toast}
+        {confirmationDialog}
+      </>
     );
   if (result.kind === "upgradeable")
     return (
-      <ShellHeader name={signedInName} onSignOut={signOut}>
-        <main className="center-card">
+      <>
+        <ShellHeader name={signedInName} onSignOut={signOut}>
+          <main className="center-card">
           <h2>נדרש עדכון קטן במבנה הגיליון</h2>
           <p>
             ניתן להשלים את המבנה על ידי הוספת לשוניות או עמודות בלבד. נתונים
             קיימים לא יימחקו או יועברו.
           </p>
-          {error && (
-            <div className="alert error" role="alert">
-              {error}
-            </div>
-          )}
           <ul>
             {result.issues.map((issue) => (
               <li key={issue}>{issue}</li>
@@ -557,7 +650,15 @@ export function App() {
             <button
               className="primary-button"
               disabled={saving}
-              onClick={() => void upgradeSheetStructure()}
+              onClick={() =>
+                setConfirmation({
+                  title: "השלמת מבנה הגיליון",
+                  message:
+                    "להוסיף לגיליון את הלשוניות והעמודות החסרות? נתונים קיימים לא יימחקו או יועברו.",
+                  confirmLabel: "השלמת המבנה",
+                  onConfirm: () => void upgradeSheetStructure(),
+                })
+              }
             >
               {saving ? "מעדכן…" : "השלמת מבנה הגיליון"}
             </button>
@@ -572,8 +673,11 @@ export function App() {
           >
             בחירת גיליון אחר
           </button>
-        </main>
-      </ShellHeader>
+          </main>
+        </ShellHeader>
+        {toast}
+        {confirmationDialog}
+      </>
     );
   if (result.kind === "incompatible")
     return (
@@ -624,20 +728,7 @@ export function App() {
           הגיליון פתוח לקריאה בלבד. פעולות עריכה אינן זמינות.
         </div>
       )}
-      {(error || notice) && (
-        <div className={error ? "alert error" : "alert success"}>
-          {error || notice}
-          <button
-            onClick={() => {
-              setError("");
-              setNotice("");
-            }}
-            aria-label="סגירה"
-          >
-            ×
-          </button>
-        </div>
-      )}
+      {toast}
       <main className="content">
         {view === "dashboard" && (
           <Dashboard
@@ -662,20 +753,24 @@ export function App() {
                 ? canRemoveSoldier(soldier, data.numberedItems, data.holdings)
                 : null;
               if (issue) return setError(issue);
-              if (
-                window.confirm(
-                  soldier.active ? "להסיר את החייל?" : "להפעיל מחדש את החייל?",
-                )
-              )
-                void mutate(
+              setConfirmation({
+                title: soldier.active ? "הסרת חייל" : "הפעלת חייל מחדש",
+                message: soldier.active
+                  ? `להסיר את ${soldier.name}? פרטי החייל וההיסטוריה יישמרו.`
+                  : `להפעיל מחדש את ${soldier.name}?`,
+                confirmLabel: soldier.active ? "הסרה" : "הפעלה מחדש",
+                danger: soldier.active,
+                onConfirm: () =>
+                  void mutate(
                   (current, repository) =>
                     repository.setSoldierActive(
                       current,
                       soldier,
                       !soldier.active,
-                    ),
+                  ),
                   soldier.active ? "החייל הוסר" : "החייל הופעל",
-                );
+                  ),
+              });
             }}
           />
         )}
@@ -684,6 +779,11 @@ export function App() {
             data={operationData}
             editable={data.meta.editable}
             saving={saving}
+            canAddCatalogType={hasAllPlatoons(access)}
+            canAddNumberedItem={canAccessMethod(access, "צל״מ")}
+            onAddCatalogType={() => setCatalogForm("new")}
+            onAddNumberedItem={() => setNumberedForm("new")}
+            initialSoldier={signingSoldier}
             initialItem={signingSeed}
             onInitialItemApplied={() => setSigningSeed(null)}
             onSave={async (soldier, input) => {
@@ -717,36 +817,44 @@ export function App() {
                 ? canRemoveCatalogItem(item, data.numberedItems, data.holdings)
                 : null;
               if (issue) return setError(issue);
-              if (
-                window.confirm(
-                  item.active
-                    ? "להסיר את סוג הציוד?"
-                    : "להפעיל מחדש את סוג הציוד?",
-                )
-              )
-                void mutate(
+              setConfirmation({
+                title: item.active
+                  ? "הסרת סוג ציוד"
+                  : "הפעלת סוג ציוד מחדש",
+                message: item.active
+                  ? `להסיר את ${itemLabel(item.type, item.variant, item.variantLabel)}? הנתונים וההיסטוריה יישמרו.`
+                  : `להפעיל מחדש את ${itemLabel(item.type, item.variant, item.variantLabel)}?`,
+                confirmLabel: item.active ? "הסרה" : "הפעלה מחדש",
+                danger: item.active,
+                onConfirm: () =>
+                  void mutate(
                   (current, repository) =>
                     repository.setCatalogActive(current, item, !item.active),
                   item.active ? "סוג הציוד הוסר" : "סוג הציוד הופעל",
-                );
+                  ),
+              });
             }}
             onNumberedToggle={(item) => {
               const issue = item.active ? canRemoveNumberedItem(item) : null;
               if (issue) return setError(issue);
-              if (
-                window.confirm(
-                  item.active ? "להסיר את הפריט?" : "להפעיל מחדש את הפריט?",
-                )
-              )
-                void mutate(
+              setConfirmation({
+                title: item.active ? "הסרת פריט צל״מ" : "הפעלת פריט מחדש",
+                message: item.active
+                  ? `להסיר את ${itemLabel(item.type, item.variant)} מספר ${item.number}? הנתונים וההיסטוריה יישמרו.`
+                  : `להפעיל מחדש את ${itemLabel(item.type, item.variant)} מספר ${item.number}?`,
+                confirmLabel: item.active ? "הסרה" : "הפעלה מחדש",
+                danger: item.active,
+                onConfirm: () =>
+                  void mutate(
                   (current, repository) =>
                     repository.setNumberedItemActive(
                       current,
                       item,
                       !item.active,
-                    ),
+                  ),
                   item.active ? "הפריט הוסר" : "הפריט הופעל",
-                );
+                  ),
+              });
             }}
           />
         )}
@@ -757,14 +865,11 @@ export function App() {
           <SettingsView
             data={data}
             editable={data.meta.editable}
-            onSave={(platoons) =>
+            onSave={(settings) =>
               void mutate(
                 (current, repository) =>
-                  repository.saveSettings(current, {
-                    platoons,
-                    schemaVersion: data.settings.schemaVersion,
-                  }),
-                "המחלקות נשמרו",
+                  repository.saveSettings(current, settings),
+                "ההגדרות נשמרו",
               )
             }
             onSavePermissions={(permissions) =>
@@ -774,6 +879,7 @@ export function App() {
                 "ההרשאות נשמרו",
               )
             }
+            onRequestConfirmation={setConfirmation}
           />
         )}
       </main>
@@ -795,6 +901,7 @@ export function App() {
             className={view === id ? "active" : ""}
             onClick={() => {
               setSigningSeed(null);
+              setSigningSoldier(null);
               setView(id);
             }}
           >
@@ -860,12 +967,13 @@ export function App() {
           item={numberedForm === "new" ? undefined : numberedForm}
           saving={saving}
           onClose={() => setNumberedForm(null)}
-          onSave={async (type, variant, number, note) => {
+          onSave={async (type, variant, number, location, note) => {
             const input = {
               type,
               variant,
               number,
               status: "זמין" as const,
+              location,
               note,
             };
             const ok = await mutate(
@@ -1011,6 +1119,11 @@ export function App() {
             setAction({ kind: "quantity", item, soldier: soldierDetail, mode })
           }
           onShare={() => setMovementShareSoldier(soldierDetail)}
+          onOpenSigning={() => {
+            const selected = soldierDetail;
+            setSoldierDetail(null);
+            openSignings(null, selected);
+          }}
           onSignature={openSignature}
         />
       )}
@@ -1034,6 +1147,7 @@ export function App() {
           onRetry={() => void openSignature(signatureViewer.summary)}
         />
       )}
+      {confirmationDialog}
       {catalogDetail && (
         <CatalogDetail
           data={visibleData}
@@ -1163,6 +1277,10 @@ function Dashboard({
     (sum, holding) => sum + holding.quantity,
     0,
   );
+  const belowStandard = data.catalog.filter((item) => {
+    if (!item.active || item.standard == null) return false;
+    return catalogActualQuantity(item, data.numberedItems) < item.standard;
+  }).length;
   const cards = [
     ["פריטי צל״מ", activeNumbered.length],
     ["צל״מ משויך", activeNumbered.filter((item) => item.assignedTo).length],
@@ -1172,6 +1290,7 @@ function Dashboard({
     ],
     ["יחידות כמותיות", quantityTotal],
     ["יחידות מוחזקות", quantityIssued],
+    ["סוגים בחוסר לתקן", belowStandard],
     [
       "תקול / בתיקון",
       activeNumbered.filter((item) => ["תקול", "בתיקון"].includes(item.status))
@@ -1408,6 +1527,11 @@ function SigningsView({
   data,
   editable,
   saving,
+  canAddCatalogType,
+  canAddNumberedItem,
+  onAddCatalogType,
+  onAddNumberedItem,
+  initialSoldier,
   initialItem,
   onInitialItemApplied,
   onSave,
@@ -1415,12 +1539,18 @@ function SigningsView({
   data: CompanyData;
   editable: boolean;
   saving: boolean;
+  canAddCatalogType: boolean;
+  canAddNumberedItem: boolean;
+  onAddCatalogType: () => void;
+  onAddNumberedItem: () => void;
+  initialSoldier: Soldier | null;
   initialItem: SigningSeed | null;
   onInitialItemApplied: () => void;
   onSave: (soldier: Soldier, input: SigningSessionInput) => Promise<boolean>;
 }) {
   const [query, setQuery] = useState("");
-  const [selectedSoldier, setSelectedSoldier] = useState<Soldier | null>(null);
+  const [selectedSoldier, setSelectedSoldier] =
+    useState<Soldier | null>(initialSoldier);
   const [selectedNumbered, setSelectedNumbered] = useState<Set<string>>(
     new Set(),
   );
@@ -1539,7 +1669,7 @@ function SigningsView({
     setNumberedToAdd("");
     setQuantityToAdd("");
     setAddQuantity("1");
-  }, [data, selectedSoldier]);
+  }, [selectedSoldier?.personalNumber]);
 
   if (!selectedSoldier) {
     return (
@@ -1737,7 +1867,7 @@ function SigningsView({
 
       {editable && (
         <section className="panel signing-add-panel">
-          <h2>הוספת ציוד</h2>
+          <h2>הוספת ציוד להחתמה</h2>
           <div className="signing-add-grid">
             <div>
               <Field label="פריט צל״מ זמין">
@@ -1828,6 +1958,35 @@ function SigningsView({
         </section>
       )}
 
+      {editable && (canAddCatalogType || canAddNumberedItem) && (
+        <section className="panel signing-inventory-panel">
+          <h2>הוספת ציוד חדש למלאי</h2>
+          <p>לאחר השמירה הרשימות בהחתמה יתעדכנו בלי לאבד את הטיוטה הנוכחית.</p>
+          <div className="quick-actions">
+            {canAddCatalogType && (
+              <button
+                type="button"
+                className={
+                  canAddNumberedItem ? "secondary-button" : "primary-button"
+                }
+                onClick={onAddCatalogType}
+              >
+                סוג ציוד חדש
+              </button>
+            )}
+            {canAddNumberedItem && (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={onAddNumberedItem}
+              >
+                פריט צל״מ חדש
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
       <div className="signing-save-bar">
         <span>
           {changeCount
@@ -1913,7 +2072,9 @@ function InventoryView({
       (!status || item.status === status) &&
       (!platoon || holderMatches(item.assignedTo)) &&
       (!query ||
-        `${item.type} ${item.variant} ${item.number}`.includes(query.trim())),
+        `${item.type} ${item.variant} ${item.number} ${item.location}`.includes(
+          query.trim(),
+        )),
   );
   const quantity = data.catalog.filter(
     (item) =>
@@ -1922,7 +2083,8 @@ function InventoryView({
       (!type || item.type === type) &&
       (!method || method === "כמותי") &&
       !status &&
-      (!query || `${item.type} ${item.variant}`.includes(query.trim())) &&
+      (!query ||
+        `${item.type} ${item.variant} ${item.location}`.includes(query.trim())) &&
       (!platoon ||
         data.holdings.some(
           (holding) =>
@@ -1930,6 +2092,9 @@ function InventoryView({
             holding.variant === item.variant &&
             holderMatches(holding.personalNumber),
         )),
+  );
+  const standards = data.catalog.filter(
+    (item) => item.active && item.standard != null,
   );
   const filters = { query, type, method, status, platoon, showArchived };
   return (
@@ -1977,7 +2142,7 @@ function InventoryView({
       </div>
       <div className="filters">
         <input
-          placeholder="חיפוש סוג, מאפיין או מספר"
+          placeholder="חיפוש סוג, מאפיין, מספר או מיקום"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
@@ -2025,6 +2190,27 @@ function InventoryView({
           כולל שהוסרו
         </label>
       </div>
+      {standards.length > 0 && (
+        <div className="standard-overview" aria-label="מצב עמידה בתקן">
+          {standards.map((item) => {
+            const actual = catalogActualQuantity(item, data.numberedItems);
+            const missing = Math.max(0, (item.standard ?? 0) - actual);
+            return (
+              <article key={catalogKey(item.type, item.variant)}>
+                <strong>
+                  {itemLabel(item.type, item.variant, item.variantLabel)}
+                </strong>
+                <span>
+                  בפועל {actual} מתוך תקן {item.standard}
+                </span>
+                <span className={`status ${missing ? "danger" : "success"}`}>
+                  {missing ? `חסרים ${missing}` : "עומדים בתקן"}
+                </span>
+              </article>
+            );
+          })}
+        </div>
+      )}
       <div className="cards-list">
         {numbered.map((item) => {
           const holder = data.soldiers.find(
@@ -2044,6 +2230,7 @@ function InventoryView({
                   {holder
                     ? `${holder.name} · מחלקה ${holder.platoon}`
                     : "לא משויך"}
+                  {item.location ? ` · מיקום ${item.location}` : ""}
                 </p>
                 <span className={`status ${statusClass(item.status)}`}>
                   {item.status}
@@ -2106,7 +2293,9 @@ function InventoryView({
           >
             <div>
               <h3>{itemLabel(item.type, item.variant, item.variantLabel)}</h3>
-              <p>כמותי</p>
+              <p>
+                כמותי{item.location ? ` · מיקום ${item.location}` : ""}
+              </p>
               <div className="inventory-numbers">
                 <span>
                   מלאי <strong>{item.totalStock}</strong>
@@ -2117,6 +2306,12 @@ function InventoryView({
                 <span>
                   זמין <strong>{availableQuantity(item, stockHoldings)}</strong>
                 </span>
+                {item.standard != null && (
+                  <span>
+                    תקן <strong>{item.standard}</strong> · חסרים{" "}
+                    <strong>{Math.max(0, item.standard - item.totalStock)}</strong>
+                  </span>
+                )}
               </div>
             </div>
             {editable && (
@@ -2379,13 +2574,18 @@ function SettingsView({
   editable,
   onSave,
   onSavePermissions,
+  onRequestConfirmation,
 }: {
   data: CompanyData;
   editable: boolean;
-  onSave: (values: string[]) => void;
+  onSave: (settings: CompanyData["settings"]) => void;
   onSavePermissions: (permissions: PermissionInput[]) => void;
+  onRequestConfirmation: (request: ConfirmationRequest) => void;
 }) {
   const [text, setText] = useState(data.settings.platoons.join("\n"));
+  const [locationsText, setLocationsText] = useState(
+    data.settings.locations.join("\n"),
+  );
   const [permissionForm, setPermissionForm] = useState<
     PermissionRecord | "new" | null
   >(null);
@@ -2401,7 +2601,7 @@ function SettingsView({
       <div className="page-heading">
         <div>
           <h1>הגדרות</h1>
-          <p>ניהול מחלקות והרשאות</p>
+          <p>ניהול מחלקות, מיקומים והרשאות</p>
         </div>
       </div>
       <section className="panel">
@@ -2417,9 +2617,40 @@ function SettingsView({
         {editable && (
           <button
             className="primary-button"
-            onClick={() => onSave(text.split("\n"))}
+            onClick={() =>
+              onSave({
+                ...data.settings,
+                platoons: text.split("\n"),
+                locations: locationsText.split("\n"),
+              })
+            }
           >
             שמירת מחלקות
+          </button>
+        )}
+      </section>
+      <section className="panel">
+        <h2>מיקומי ציוד</h2>
+        <Field label="מיקום בכל שורה">
+          <textarea
+            rows={6}
+            value={locationsText}
+            disabled={!editable}
+            onChange={(event) => setLocationsText(event.target.value)}
+          />
+        </Field>
+        {editable && (
+          <button
+            className="primary-button"
+            onClick={() =>
+              onSave({
+                ...data.settings,
+                platoons: text.split("\n"),
+                locations: locationsText.split("\n"),
+              })
+            }
+          >
+            שמירת מיקומים
           </button>
         )}
       </section>
@@ -2467,19 +2698,22 @@ function SettingsView({
                     type="button"
                     className="small-button danger-text"
                     onClick={() => {
-                      if (
-                        window.confirm(
+                      onRequestConfirmation({
+                        title: "הסרת הרשאת משתמש",
+                        message:
                           "להסיר את הגדרת המשתמש? ללא הגדרה תהיה לו גישה תפעולית מלאה כברירת מחדל.",
-                        )
-                      )
-                        onSavePermissions(
+                        confirmLabel: "הסרת ההרשאה",
+                        danger: true,
+                        onConfirm: () =>
+                          onSavePermissions(
                           permissionInputs(
                             data.permissions.filter(
                               (candidate) =>
                                 candidate.email !== permission.email,
                             ),
                           ),
-                        );
+                          ),
+                      });
                     }}
                   >
                     הסרה
@@ -2743,6 +2977,10 @@ function CatalogFormModal({
       "צל״מ",
   );
   const [stock, setStock] = useState(String(item?.totalStock || 0));
+  const [location, setLocation] = useState(item?.location || "");
+  const [standard, setStandard] = useState(
+    item?.standard == null ? "" : String(item.standard),
+  );
   const [note, setNote] = useState(item?.note || "");
   return (
     <Modal title={item ? "עריכת סוג ציוד" : "סוג ציוד חדש"} onClose={onClose}>
@@ -2755,6 +2993,8 @@ function CatalogFormModal({
             variantLabel,
             method,
             totalStock: Number(stock),
+            location: method === "כמותי" ? location : "",
+            standard: standard === "" ? null : Number(standard),
             note,
           });
         }}
@@ -2810,6 +3050,28 @@ function CatalogFormModal({
             />
           </Field>
         )}
+        {method === "כמותי" && (
+          <Field label="מיקום (אופציונלי)">
+            <select
+              value={location}
+              onChange={(event) => setLocation(event.target.value)}
+            >
+              <option value="">ללא מיקום</option>
+              {data.settings.locations.map((value) => (
+                <option key={value}>{value}</option>
+              ))}
+            </select>
+          </Field>
+        )}
+        <Field label="תקן (אופציונלי)">
+          <input
+            type="number"
+            min="0"
+            step="1"
+            value={standard}
+            onChange={(event) => setStandard(event.target.value)}
+          />
+        </Field>
         <Field label="הערה">
           <textarea
             value={note}
@@ -2840,13 +3102,20 @@ function NumberedFormModal({
   item?: NumberedItem;
   saving: boolean;
   onClose: () => void;
-  onSave: (type: string, variant: string, number: string, note: string) => void;
+  onSave: (
+    type: string,
+    variant: string,
+    number: string,
+    location: string,
+    note: string,
+  ) => void;
 }) {
   const options = activeCatalogItemsForMethod(data.catalog, "צל״מ");
   const [key, setKey] = useState(
     item ? catalogKey(item.type, item.variant) : "",
   );
   const [number, setNumber] = useState(item?.number || "");
+  const [location, setLocation] = useState(item?.location || "");
   const [note, setNote] = useState(item?.note || "");
   return (
     <Modal title={item ? "עריכת פריט צל״מ" : "פריט צל״מ חדש"} onClose={onClose}>
@@ -2857,7 +3126,8 @@ function NumberedFormModal({
             (candidate) =>
               catalogKey(candidate.type, candidate.variant) === key,
           );
-          if (selected) onSave(selected.type, selected.variant, number, note);
+          if (selected)
+            onSave(selected.type, selected.variant, number, location, note);
         }}
       >
         <Field label="סוג צל״מ ופרט נוסף">
@@ -2886,6 +3156,17 @@ function NumberedFormModal({
             value={number}
             onChange={(event) => setNumber(event.target.value)}
           />
+        </Field>
+        <Field label="מיקום (אופציונלי)">
+          <select
+            value={location}
+            onChange={(event) => setLocation(event.target.value)}
+          >
+            <option value="">ללא מיקום</option>
+            {data.settings.locations.map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+          </select>
         </Field>
         <Field label="הערה">
           <textarea
@@ -3563,6 +3844,7 @@ function SoldierDetail({
   onNumbered,
   onQuantity,
   onShare,
+  onOpenSigning,
   onSignature,
 }: {
   data: CompanyData;
@@ -3575,6 +3857,7 @@ function SoldierDetail({
   ) => void;
   onQuantity: (item: CatalogItem, mode: "return" | "transfer") => void;
   onShare: () => void;
+  onOpenSigning: () => void;
   onSignature: (signature: SignatureSummary) => void;
 }) {
   const numbered = numberedItemsForSoldier(
@@ -3605,23 +3888,35 @@ function SoldierDetail({
           </>
         )}
       </p>
-      <button
-        className="icon-button share-button"
-        type="button"
-        title="שיתוף תנועות ב-WhatsApp"
-        aria-label={`שיתוף התנועות של ${soldier.name} ב-WhatsApp`}
-        onClick={onShare}
-      >
-        <img src={whatsappIconUrl} alt="" />
-      </button>
+      <div className="soldier-detail-primary-actions">
+        {editable && (
+          <button
+            type="button"
+            className="primary-button"
+            onClick={onOpenSigning}
+          >
+            פתיחת החתמה
+          </button>
+        )}
+        <button
+          className="icon-button share-button"
+          type="button"
+          title="שיתוף תנועות ב-WhatsApp"
+          aria-label={`שיתוף התנועות של ${soldier.name} ב-WhatsApp`}
+          onClick={onShare}
+        >
+          <img src={whatsappIconUrl} alt="" />
+        </button>
+      </div>
       <h3>ציוד נוכחי</h3>
       <div className="cards-list compact">
         {numbered.map((item) => (
           <article className="list-card" key={`${item.type}-${item.number}`}>
             <div>
-              <strong>
-                {itemLabel(item.type, item.variant)} · {item.number}
-              </strong>
+                  <strong>
+                    {itemLabel(item.type, item.variant)} · {item.number}
+                  </strong>
+                  {item.location && <p>מיקום: {item.location}</p>}
             </div>
             {editable && (
               <div className="card-actions">
@@ -3770,6 +4065,13 @@ function CatalogDetail({
           זמין <strong>{availableQuantity(item, stockHoldings)}</strong>
         </span>
       </div>
+      {item.location && <p>מיקום: {item.location}</p>}
+      {item.standard != null && (
+        <p>
+          תקן: {item.standard} · חסרים{" "}
+          {Math.max(0, item.standard - item.totalStock)}
+        </p>
+      )}
       {editable && (
         <div className="quick-actions">
           <button

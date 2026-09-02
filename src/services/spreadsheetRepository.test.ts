@@ -52,6 +52,7 @@ const data: CompanyData = {
       number: "123",
       status: "זמין",
       assignedTo: "",
+      location: "",
       note: "",
       active: true,
     },
@@ -60,7 +61,7 @@ const data: CompanyData = {
   movements: [],
   signatures: [],
   permissions: [],
-  settings: { platoons: ["1"], schemaVersion: "4" },
+  settings: { platoons: ["1"], locations: [], schemaVersion: "7" },
 };
 
 describe("saveSigningSession", () => {
@@ -182,7 +183,7 @@ describe("applyAdditiveSchemaUpgrade", () => {
         (value: { userEnteredValue: { stringValue?: string } }) =>
           value.userEnteredValue.stringValue,
       ),
-    ).toEqual(["schema_version", "4"]);
+    ).toEqual(["schema_version", "7"]);
   });
 });
 
@@ -310,6 +311,7 @@ describe("repository permission enforcement", () => {
       variantLabel: "",
       method: "כמותי" as const,
       totalStock: 10,
+      location: "",
       note: "",
       active: true,
     };
@@ -326,7 +328,7 @@ describe("repository permission enforcement", () => {
           platoons: ["1"],
         },
       ],
-      settings: { platoons: ["1", "2"], schemaVersion: "4" },
+      settings: { platoons: ["1", "2"], locations: [], schemaVersion: "7" },
     };
 
     await expect(
@@ -352,6 +354,7 @@ describe("repository permission enforcement", () => {
       variantLabel: "",
       method: "כמותי" as const,
       totalStock: 10,
+      location: "",
       note: "",
       active: true,
     };
@@ -362,6 +365,7 @@ describe("repository permission enforcement", () => {
       variantLabel: "",
       method: "צל״מ" as const,
       totalStock: 0,
+      location: "",
       note: "",
       active: true,
     };
@@ -386,6 +390,7 @@ describe("repository permission enforcement", () => {
         variantLabel: "",
         method: "צל״מ",
         totalStock: 0,
+        location: "",
         note: "",
       }),
     ).rejects.toThrow("מוגבל למחלקות");
@@ -395,6 +400,7 @@ describe("repository permission enforcement", () => {
         variant: "",
         number: "123",
         status: "זמין",
+        location: "",
         note: "עריכה",
       }),
     ).rejects.toThrow("מוגבל למחלקות");
@@ -416,6 +422,7 @@ describe("repository permission enforcement", () => {
       variant: "",
       number: "124",
       status: "זמין",
+      location: "",
       note: "",
     });
 
@@ -443,10 +450,16 @@ describe("repository permission enforcement", () => {
       variantLabel: "",
       method: "צל״מ",
       totalStock: 0,
+      location: "",
+      standard: 5,
       note: "",
     });
 
     expect(batchUpdate).toHaveBeenCalledTimes(1);
+    const catalogValues =
+      batchUpdate.mock.calls[0][0].resource.requests[0].appendCells.rows[0]
+        .values;
+    expect(catalogValues[8].userEnteredValue.numberValue).toBe(5);
   });
 
   it("allows a non-admin with quantity scope to add and edit a quantity type", async () => {
@@ -458,6 +471,7 @@ describe("repository permission enforcement", () => {
       variantLabel: "",
       method: "כמותי" as const,
       totalStock: 0,
+      location: "",
       note: "",
       active: true,
     };
@@ -481,6 +495,7 @@ describe("repository permission enforcement", () => {
       variantLabel: "",
       method: "כמותי",
       totalStock: 4,
+      location: "",
       note: "",
     });
     await repository.editCatalogItem(scopedData, quantityItem, {
@@ -489,6 +504,7 @@ describe("repository permission enforcement", () => {
       variantLabel: quantityItem.variantLabel,
       method: quantityItem.method,
       totalStock: 5,
+      location: "",
       note: "עודכן",
     });
 
@@ -504,6 +520,7 @@ describe("repository permission enforcement", () => {
       variantLabel: "",
       method: "כמותי" as const,
       totalStock: 10,
+      location: "",
       note: "",
       active: true,
     };
@@ -527,11 +544,13 @@ describe("repository permission enforcement", () => {
       variantLabel: "",
       method: "כמותי",
       totalStock: 1,
+      location: "",
       note: "",
     });
     await repository.editCatalogItem(scopedData, quantityItem, {
       ...quantityItem,
       totalStock: 11,
+      location: "",
     });
     await repository.adjustStock(scopedData, quantityItem, 12, "");
     await repository.setCatalogActive(scopedData, quantityItem, false);
@@ -573,5 +592,62 @@ describe("repository permission enforcement", () => {
     const requests = batchUpdate.mock.calls[0][0].resource.requests;
     expect(requests[0].updateCells.range.endColumnIndex).toBe(4);
     expect(requests[1].appendCells).toBeTruthy();
+  });
+
+  it("saves managed locations and prevents removing a location in use", async () => {
+    const repository = new SpreadsheetRepository("sheet");
+    const adminData: CompanyData = {
+      ...data,
+      permissions: [
+        {
+          row: 2,
+          email: "admin@example.com",
+          admin: true,
+          equipmentScope: "הכל",
+          platoons: [],
+        },
+      ],
+    };
+
+    await repository.saveSettings(adminData, {
+      platoons: ["1"],
+      locations: ["מחסן", "משרד"],
+      schemaVersion: "7",
+    });
+    const rows = batchUpdate.mock.calls[0][0].resource.requests[0].updateCells.rows;
+    const values = rows.map((row: { values: Array<{ userEnteredValue: { stringValue?: string } }> }) =>
+      row.values.map((value) => value.userEnteredValue.stringValue),
+    );
+    expect(values).toContainEqual(["1", "location", "מחסן"]);
+
+    const usedLocationData: CompanyData = {
+      ...adminData,
+      catalog: [],
+      numberedItems: [
+        {
+          row: 2,
+          type: "נשק",
+          variant: "",
+          number: "123",
+          status: "זמין",
+          assignedTo: "",
+          location: "מחסן",
+          note: "",
+          active: true,
+        },
+      ],
+      settings: {
+        platoons: ["1"],
+        locations: ["מחסן"],
+        schemaVersion: "7",
+      },
+    };
+    await expect(
+      repository.saveSettings(usedLocationData, {
+        platoons: ["1"],
+        locations: [],
+        schemaVersion: "7",
+      }),
+    ).rejects.toThrow("לא ניתן להסיר את המיקום מחסן");
   });
 });

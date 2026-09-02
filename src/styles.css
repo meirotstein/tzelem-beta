@@ -273,6 +273,45 @@ button:disabled {
   color: inherit;
   font-size: 22px;
 }
+.toast {
+  position: fixed;
+  z-index: 100;
+  top: max(14px, env(safe-area-inset-top));
+  left: 50%;
+  display: flex;
+  width: min(calc(100% - 28px), 520px);
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid;
+  border-radius: 12px;
+  box-shadow: 0 12px 34px #102c3340;
+  transform: translateX(-50%);
+}
+.toast.error {
+  border-color: #efb2ad;
+  background: #fff3f2;
+  color: #8f241c;
+}
+.toast.success {
+  border-color: #acd6b5;
+  background: #f0fbf2;
+  color: #246535;
+}
+.toast button {
+  width: 30px;
+  min-height: 30px;
+  flex: 0 0 auto;
+  background: transparent;
+  color: inherit;
+  font-size: 22px;
+}
+.confirmation-message {
+  margin: 4px 0 18px;
+  color: #405a61;
+  line-height: 1.6;
+}
 
 .banner {
   display: flex;
@@ -609,6 +648,27 @@ textarea::placeholder {
   background: #edf4f5;
   color: #476068;
   font-size: 13px;
+}
+.standard-overview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.standard-overview article {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #d7e4e7;
+  border-radius: 12px;
+  background: #fff;
+}
+.standard-overview article > span:not(.status) {
+  color: #667b81;
+  font-size: 13px;
+}
+.standard-overview .status {
+  justify-self: start;
 }
 .activity-list,
 .history-list {
@@ -1201,6 +1261,12 @@ textarea::placeholder {
   padding: 0 10px;
   font-size: 12px;
   white-space: nowrap;
+}
+.soldier-detail-primary-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 12px 0;
 }
 
 @media (max-width: 620px) {

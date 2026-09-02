@@ -23,6 +23,27 @@ export const activeCatalogItemsForMethod = (
       item.active && item.method === method && Boolean(normalizeText(item.type)),
   );
 
+export const catalogActualQuantity = (
+  item: CatalogItem,
+  numberedItems: NumberedItem[],
+): number =>
+  item.method === "כמותי"
+    ? item.totalStock
+    : numberedItems.filter(
+        (numbered) =>
+          numbered.active &&
+          catalogKey(numbered.type, numbered.variant) ===
+            catalogKey(item.type, item.variant),
+      ).length;
+
+export const catalogStandardGap = (
+  item: CatalogItem,
+  numberedItems: NumberedItem[],
+): number | null =>
+  item.standard == null
+    ? null
+    : Math.max(0, item.standard - catalogActualQuantity(item, numberedItems));
+
 export const validateSoldierInput = (
   input: SoldierInput,
   soldiers: Soldier[],
@@ -87,6 +108,11 @@ export const validateCatalogInput = (
     );
   if (!Number.isInteger(input.totalStock) || input.totalStock < 0)
     errors.push("המלאי הכולל חייב להיות מספר שלם שאינו שלילי.");
+  if (
+    input.standard != null &&
+    (!Number.isInteger(input.standard) || input.standard < 0)
+  )
+    errors.push("התקן חייב להיות מספר שלם שאינו שלילי.");
   const key = catalogKey(input.type, input.variant);
   if (
     catalog.some(

@@ -34,6 +34,7 @@ const data = {
       variantLabel: "",
       method: "צל״מ",
       totalStock: 0,
+      location: "",
       note: "",
       active: true,
     },
@@ -44,6 +45,7 @@ const data = {
       variantLabel: "מידה",
       method: "כמותי",
       totalStock: 10,
+      location: "מחסן פלוגתי",
       note: "",
       active: true,
     },
@@ -56,6 +58,7 @@ const data = {
       number: "100",
       status: "משויך",
       assignedTo: "1",
+      location: "מחסן פלוגתי",
       note: "",
       active: true,
     },
@@ -66,6 +69,7 @@ const data = {
       number: "200",
       status: "זמין",
       assignedTo: "",
+      location: "",
       note: "",
       active: true,
     },
@@ -76,7 +80,11 @@ const data = {
   movements: [],
   signatures: [],
   permissions: [],
-  settings: { platoons: ["א", "ב"], schemaVersion: "2" },
+  settings: {
+    platoons: ["א", "ב"],
+    locations: ["מחסן פלוגתי"],
+    schemaVersion: "7",
+  },
   meta: {
     spreadsheetId: "x",
     title: "x",
@@ -97,6 +105,7 @@ describe("WhatsApp sharing", () => {
     });
     expect(message).toContain("מחלקה א · עם ציוד");
     expect(message).toContain("נשק — 100");
+    expect(message).toContain("מיקום מחסן פלוגתי");
     expect(message).toContain("חולצה · מידה M — 2 יח׳");
     expect(message).not.toContain("נועם");
   });
@@ -117,6 +126,7 @@ describe("WhatsApp sharing", () => {
     );
     expect(message).toContain("100 — דנה (מחלקה א) · משויך");
     expect(message).toContain("מלאי 10, מוחזק 2, זמין 8");
+    expect(message).toContain("מיקום מחסן פלוגתי");
     expect(message).not.toContain("200");
   });
 

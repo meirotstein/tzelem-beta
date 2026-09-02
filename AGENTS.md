@@ -52,8 +52,10 @@ Required tabs and columns:
 5. `מלאי כולל`
 6. `הערה`
 7. `פעיל`
+8. `מיקום` (optional)
+9. `תקן` (optional non-negative integer)
 
-`שם מאפיין` and `ערך מאפיין` are optional. For example, use `מידה` + `M`, or `דגם` + `42`. Leave both blank for items such as personal bandages or protective glasses. Do not show the term “וריאנט” in the user interface. `שיטת ניהול` is either `צל״מ` or `כמותי`. All quantity values are displayed with the fixed label `יח׳`; do not add a configurable counting-unit field.
+`שם מאפיין` and `ערך מאפיין` are optional. For example, use `מידה` + `M`, or `דגם` + `42`. Leave both blank for items such as personal bandages or protective glasses. Do not show the term “וריאנט” in the user interface. `שיטת ניהול` is either `צל״מ` or `כמותי`. Catalog `מיקום` is optional for quantity equipment and must come from the managed location list. Individual numbered `צל״מ` items also have an optional managed location. `תקן` is optional for both methods; compare it with total stock for quantity equipment and with the number of active numbered items for `צל״מ`. All quantity values are displayed with the fixed label `יח׳`; do not add a configurable counting-unit field.
 
 ### `פריטי צל״מ`
 
@@ -64,6 +66,7 @@ Required tabs and columns:
 5. `מספר אישי משויך`
 6. `הערה`
 7. `פעיל`
+8. `מיקום` (optional; from the managed location list)
 
 ### `החזקות כמותיות`
 
@@ -109,7 +112,7 @@ Each signing session has one signature row. `פרטי ההחתמה` is a JSON sn
 
 ### `הגדרות`
 
-Contains platoons and `schema_version` (currently `4`). Equipment types and optional characteristics are managed in `קטלוג`.
+Contains managed platoon and equipment-location lists plus `schema_version` (currently `7`). Equipment types, optional characteristics, and standards are managed in `קטלוג`.
 
 Keep the schema definition centralized in code. Reads and writes must target headers by the validated contract rather than relying on unexplained numeric offsets throughout the UI.
 
@@ -187,6 +190,7 @@ For operations that update current state and append history, minimize partial wr
 - Treat edits as a local draft. Allow removing `צל״מ`, changing or zeroing quantities, and adding available `צל״מ` or quantity equipment.
 - Label equipment-addition actions `הוספה להחתמה` so they are not confused with creating inventory records.
 - Quantity-to-add inputs must allow temporarily empty text while editing and validate a positive integer only when applying the addition.
+- Title the draft-addition section `הוספת ציוד להחתמה`. Below it, expose the permitted `סוג ציוד חדש` and `פריט צל״מ חדש` inventory actions using the same modals as the inventory screen. Saving those modals must refresh their option lists without resetting the in-progress signing draft.
 - Pressing `שמירת ההחתמה` opens a required finger-signature canvas and does not write yet. Allow clearing or cancelling the signature.
 - Save only after a meaningful signature is present. Save the complete draft as one atomic Sheets batch containing all current-state updates, matching movement rows, the exact operation snapshot, and the normalized signature strokes. Do not write each edit as it is made.
 - After a successful save, show a WhatsApp confirmation containing exactly the changes in that signing session and the action performer. Use the soldier's phone when present; otherwise open the contact picker.
@@ -216,6 +220,7 @@ Prominent actions:
 - Add, edit, archive, reactivate, search, and filter by platoon.
 - Label the soldier name field `שם מלא`. Personal numbers must contain ASCII digits only; keep them as text so leading zeroes are preserved.
 - Soldier profile shows all current equipment and complete history.
+- Soldier profile provides a `פתיחת החתמה` action that navigates directly to `החתמות` with that soldier already selected.
 - Soldier profile allows sharing equipment movements for a selected time range. Default to the last 10 minutes, with quick access to today and a custom range. When a phone is present, address the WhatsApp draft directly to it; otherwise open the contact picker. Include the soldier name and action performer for every movement.
 - Provide WhatsApp sharing for exactly the soldiers in the current filtered result. Group the message by platoon and list each soldier's currently assigned equipment.
 
@@ -257,6 +262,8 @@ Filtering is combinable. Clear filters must be easy to discover on mobile.
 - Set document and component direction to RTL, while keeping identifiers and numbers readable.
 - Design mobile-first with large touch targets, clear loading/saving/error states, and accessible form labels.
 - Keep filter controls in at least two columns even on narrow phones; the primary search field may span the full row.
+- Show operational success and error feedback as fixed, dismissible toast messages so it remains visible regardless of scroll position. Keep field-specific validation beside its field.
+- Use the app's accessible confirmation modal for consequential actions; do not use browser `alert` or `confirm` dialogs. Removal confirmations must identify the record and explain that its data and history are retained.
 - Require confirmation for consequential actions such as return, transfer, archive, lost, and disabled.
 - Read-only mode must visibly explain why actions are unavailable, not merely hide all context.
 - Do not show stale success after a failed Sheets write. Provide a retry path where safe.

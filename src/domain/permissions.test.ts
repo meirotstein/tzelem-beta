@@ -85,18 +85,18 @@ describe("permissions", () => {
         { row: 3, name: "ב", personalNumber: "2", platoon: "2", active: true, phone: "" },
       ],
       catalog: [
-        { row: 2, type: "נשק", variant: "", variantLabel: "", method: "צל״מ", totalStock: 0, note: "", active: true },
-        { row: 3, type: "חולצה", variant: "", variantLabel: "", method: "כמותי", totalStock: 10, note: "", active: true },
+        { row: 2, type: "נשק", variant: "", variantLabel: "", method: "צל״מ", totalStock: 0, location: "", note: "", active: true },
+        { row: 3, type: "חולצה", variant: "", variantLabel: "", method: "כמותי", totalStock: 10, location: "מחסן", note: "", active: true },
       ],
       numberedItems: [
-        { row: 2, type: "נשק", variant: "", number: "10", status: "זמין", assignedTo: "", note: "", active: true },
-        { row: 3, type: "נשק", variant: "", number: "11", status: "משויך", assignedTo: "2", note: "", active: true },
+        { row: 2, type: "נשק", variant: "", number: "10", status: "זמין", assignedTo: "", location: "", note: "", active: true },
+        { row: 3, type: "נשק", variant: "", number: "11", status: "משויך", assignedTo: "2", location: "מחסן", note: "", active: true },
       ],
       holdings: [],
       movements: [],
       signatures: [],
       permissions: [],
-      settings: { platoons: ["1", "2"], schemaVersion: "4" },
+      settings: { platoons: ["1", "2"], locations: ["מחסן"], schemaVersion: "7" },
     } satisfies CompanyData;
 
     const scoped = scopeCompanyData(data, access);

@@ -63,7 +63,7 @@ export function buildSoldiersWhatsAppMessage(
         );
         numbered.forEach((item) =>
           lines.push(
-            `• ${itemLabel(item.type, item.variant)} — ${item.number}`,
+            `• ${itemLabel(item.type, item.variant)} — ${item.number}${item.location ? ` · מיקום ${item.location}` : ""}`,
           ),
         );
         quantities.forEach((holding) => {
@@ -72,7 +72,7 @@ export function buildSoldiersWhatsAppMessage(
               item.type === holding.type && item.variant === holding.variant,
           );
           lines.push(
-            `• ${itemLabel(holding.type, holding.variant, catalog?.variantLabel)} — ${holding.quantity} יח׳`,
+            `• ${itemLabel(holding.type, holding.variant, catalog?.variantLabel)} — ${holding.quantity} יח׳${catalog?.location ? ` · מיקום ${catalog.location}` : ""}`,
           );
         });
         if (!numbered.length && !quantities.length) lines.push("• ללא ציוד");
@@ -111,8 +111,22 @@ export function buildInventoryWhatsAppMessage(
         const holder = data.soldiers.find(
           (soldier) => soldier.personalNumber === item.assignedTo,
         );
+        const catalog = data.catalog.find(
+          (candidate) =>
+            candidate.type === item.type && candidate.variant === item.variant,
+        );
+        const actual = data.numberedItems.filter(
+          (candidate) =>
+            candidate.active &&
+            candidate.type === item.type &&
+            candidate.variant === item.variant,
+        ).length;
+        const standardText =
+          catalog?.standard == null
+            ? ""
+            : ` · תקן ${catalog.standard}${actual < catalog.standard ? ` (חסרים ${catalog.standard - actual})` : ""}`;
         lines.push(
-          `• ${item.variant ? `${item.variant} · ` : ""}${item.number} — ${holder ? `${holder.name} (מחלקה ${holder.platoon})` : "לא משויך"} · ${item.status}${item.active ? "" : " · הוסר"}`,
+          `• ${item.variant ? `${item.variant} · ` : ""}${item.number} — ${holder ? `${holder.name} (מחלקה ${holder.platoon})` : "לא משויך"} · ${item.status}${item.location ? ` · מיקום ${item.location}` : ""}${standardText}${item.active ? "" : " · הוסר"}`,
         );
       });
     quantityCatalog
@@ -137,7 +151,7 @@ export function buildInventoryWhatsAppMessage(
           0,
         );
         lines.push(
-          `• ${itemLabel(item.type, item.variant, item.variantLabel)} — מלאי ${item.totalStock}, מוחזק ${issued}, זמין ${item.totalStock - issued}${item.active ? "" : " · הוסר"}`,
+          `• ${itemLabel(item.type, item.variant, item.variantLabel)} — מלאי ${item.totalStock}, מוחזק ${issued}, זמין ${item.totalStock - issued}${item.standard == null ? "" : ` · תקן ${item.standard}${item.totalStock < item.standard ? ` (חסרים ${item.standard - item.totalStock})` : ""}`}${item.location ? ` · מיקום ${item.location}` : ""}${item.active ? "" : " · הוסר"}`,
         );
         holdings.forEach((holding) => {
           const soldier = data.soldiers.find(
