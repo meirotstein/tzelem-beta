@@ -6,7 +6,7 @@ import type {
   SpreadsheetMeta,
 } from "./types";
 
-export const SCHEMA_VERSION = "7";
+export const SCHEMA_VERSION = "8";
 
 export const SHEET_SCHEMAS = {
   soldiers: {
@@ -43,6 +43,14 @@ export const SHEET_SCHEMAS = {
   holdings: {
     title: "החזקות כמותיות",
     headers: ["מספר אישי", "סוג", "ערך מאפיין", "כמות"],
+  },
+  equipmentGroups: {
+    title: "ערכות",
+    headers: ["שם ערכה", "הערה", "פעיל"],
+  },
+  equipmentGroupItems: {
+    title: "פריטי ערכה",
+    headers: ["שם ערכה", "סוג", "ערך מאפיין", "כמות", "פעיל"],
   },
   movements: {
     title: "תנועות",

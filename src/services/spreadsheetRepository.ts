@@ -4,6 +4,9 @@ import type {
   CatalogItem,
   CompanyData,
   EquipmentStatus,
+  EquipmentGroup,
+  EquipmentGroupInput,
+  EquipmentGroupItem,
   LoadResult,
   ManagedSettings,
   MovementDraft,
@@ -62,6 +65,7 @@ import {
   holdingFor,
   issuedQuantity,
   validateCatalogInput,
+  validateEquipmentGroupInput,
   validateNumberedIdentity,
   validateSoldierInput,
   validateStatusChange,
@@ -470,7 +474,13 @@ export class SpreadsheetRepository {
     this.ensureAllPlatoons(data);
     const issue = active
       ? null
-      : canRemoveCatalogItem(item, data.numberedItems, data.holdings);
+      : canRemoveCatalogItem(
+          item,
+          data.numberedItems,
+          data.holdings,
+          data.equipmentGroups,
+          data.equipmentGroupItems,
+        );
     if (issue) throw new Error(issue);
     await this.batch([
       updateRow(this.sheetId(data, "catalog"), item.row, [
@@ -489,6 +499,131 @@ export class SpreadsheetRepository {
         method: item.method,
         type: item.type,
         variant: item.variant,
+      }),
+    ]);
+  }
+
+  async addEquipmentGroup(
+    data: CompanyData,
+    input: EquipmentGroupInput,
+  ): Promise<void> {
+    this.ensureEditable(data);
+    this.ensureMethodAccess(data, "כמותי");
+    this.ensureAllPlatoons(data);
+    const normalized = this.normalizedEquipmentGroupInput(input);
+    const errors = validateEquipmentGroupInput(normalized, data);
+    if (errors.length) throw new Error(errors[0]);
+    await this.batch([
+      appendRow(this.sheetId(data, "equipmentGroups"), [
+        normalized.name,
+        normalized.note,
+        true,
+      ]),
+      ...normalized.items.map((item) =>
+        appendRow(this.sheetId(data, "equipmentGroupItems"), [
+          normalized.name,
+          item.type,
+          item.variant,
+          item.quantity,
+          true,
+        ]),
+      ),
+      this.movementRequest(data, {
+        action: "הוספת ערכת ציוד",
+        method: "כמותי",
+        note: `${normalized.name} · ${normalized.items.length} פריטים`,
+      }),
+    ]);
+  }
+
+  async editEquipmentGroup(
+    data: CompanyData,
+    group: EquipmentGroup,
+    input: EquipmentGroupInput,
+  ): Promise<void> {
+    group = this.currentEquipmentGroup(data, group);
+    this.ensureEditable(data);
+    this.ensureMethodAccess(data, "כמותי");
+    this.ensureAllPlatoons(data);
+    const normalized = this.normalizedEquipmentGroupInput(input);
+    if (normalized.name !== group.name)
+      throw new Error("לא ניתן לשנות את שם הערכה לאחר יצירתה.");
+    const errors = validateEquipmentGroupInput(normalized, data, group);
+    if (errors.length) throw new Error(errors[0]);
+    const desired = new Map(
+      normalized.items.map((item) => [catalogKey(item.type, item.variant), item]),
+    );
+    const existing = data.equipmentGroupItems.filter(
+      (item) => item.groupName === group.name,
+    );
+    const existingKeys = new Set(
+      existing.map((item) => catalogKey(item.type, item.variant)),
+    );
+    await this.batch([
+      updateRow(this.sheetId(data, "equipmentGroups"), group.row, [
+        group.name,
+        normalized.note,
+        group.active,
+      ]),
+      ...existing.map((item) => {
+        const next = desired.get(catalogKey(item.type, item.variant));
+        return updateRow(this.sheetId(data, "equipmentGroupItems"), item.row, [
+          group.name,
+          item.type,
+          item.variant,
+          next?.quantity ?? item.quantity,
+          Boolean(next),
+        ]);
+      }),
+      ...normalized.items
+        .filter((item) => !existingKeys.has(catalogKey(item.type, item.variant)))
+        .map((item) =>
+          appendRow(this.sheetId(data, "equipmentGroupItems"), [
+            group.name,
+            item.type,
+            item.variant,
+            item.quantity,
+            true,
+          ]),
+        ),
+      this.movementRequest(data, {
+        action: "עריכת ערכת ציוד",
+        method: "כמותי",
+        note: `${group.name} · ${normalized.items.length} פריטים`,
+      }),
+    ]);
+  }
+
+  async setEquipmentGroupActive(
+    data: CompanyData,
+    group: EquipmentGroup,
+    active: boolean,
+  ): Promise<void> {
+    group = this.currentEquipmentGroup(data, group);
+    this.ensureEditable(data);
+    this.ensureMethodAccess(data, "כמותי");
+    this.ensureAllPlatoons(data);
+    if (active) {
+      const items = data.equipmentGroupItems
+        .filter((item) => item.groupName === group.name && item.active)
+        .map(({ type, variant, quantity }) => ({ type, variant, quantity }));
+      const errors = validateEquipmentGroupInput(
+        { name: group.name, note: group.note, items },
+        data,
+        group,
+      );
+      if (errors.length) throw new Error(errors[0]);
+    }
+    await this.batch([
+      updateRow(this.sheetId(data, "equipmentGroups"), group.row, [
+        group.name,
+        group.note,
+        active,
+      ]),
+      this.movementRequest(data, {
+        action: active ? "הפעלת ערכת ציוד" : "הסרת ערכת ציוד",
+        method: "כמותי",
+        note: group.name,
       }),
     ]);
   }
@@ -1340,6 +1475,30 @@ export class SpreadsheetRepository {
         quantity: asNonNegativeInteger(row[3]),
       }))
       .filter((holding) => holding.personalNumber || holding.type);
+    const equipmentGroups: EquipmentGroup[] = (
+      rows[SHEET_SCHEMAS.equipmentGroups.title] || []
+    )
+      .slice(1)
+      .map((row, index) => ({
+        row: index + 2,
+        name: normalizeText(row[0]),
+        note: normalizeText(row[1]),
+        active: parseActive(row[2]),
+      }))
+      .filter((group) => group.name);
+    const equipmentGroupItems: EquipmentGroupItem[] = (
+      rows[SHEET_SCHEMAS.equipmentGroupItems.title] || []
+    )
+      .slice(1)
+      .map((row, index) => ({
+        row: index + 2,
+        groupName: normalizeText(row[0]),
+        type: normalizeText(row[1]),
+        variant: normalizeText(row[2]),
+        quantity: asNonNegativeInteger(row[3]),
+        active: parseActive(row[4]),
+      }))
+      .filter((item) => item.groupName || item.type);
     const movements: MovementEntry[] = (
       rows[SHEET_SCHEMAS.movements.title] || []
     )
@@ -1447,6 +1606,46 @@ export class SpreadsheetRepository {
         );
       catalogKeys.add(key);
     });
+    const groupNames = new Set<string>();
+    equipmentGroups.forEach((group) => {
+      if (groupNames.has(group.name))
+        throw new Error(`שם ערכה כפול: ${group.name}.`);
+      groupNames.add(group.name);
+    });
+    const activeGroupNames = new Set(
+      equipmentGroups.filter((group) => group.active).map((group) => group.name),
+    );
+    const groupItemKeys = new Set<string>();
+    equipmentGroupItems.forEach((component) => {
+      if (!groupNames.has(component.groupName))
+        throw new Error(`ערכה לא קיימת בפריטי ערכה, שורה ${component.row}.`);
+      const key = `${component.groupName}\u0000${catalogKey(component.type, component.variant)}`;
+      if (groupItemKeys.has(key))
+        throw new Error(`פריט כפול בערכה ${component.groupName}.`);
+      groupItemKeys.add(key);
+      if (component.quantity <= 0)
+        throw new Error(`כמות לא תקינה בפריטי ערכה, שורה ${component.row}.`);
+      if (
+        component.active &&
+        activeGroupNames.has(component.groupName) &&
+        !catalog.some(
+          (item) =>
+            item.active &&
+            item.method === "כמותי" &&
+            catalogKey(item.type, item.variant) ===
+              catalogKey(component.type, component.variant),
+        )
+      )
+        throw new Error(`פריט ערכה אינו ציוד כמותי פעיל, שורה ${component.row}.`);
+    });
+    activeGroupNames.forEach((name) => {
+      if (
+        !equipmentGroupItems.some(
+          (component) => component.groupName === name && component.active,
+        )
+      )
+        throw new Error(`הערכה ${name} אינה מכילה פריטים פעילים.`);
+    });
     const numberedKeys = new Set<string>();
     numberedItems.forEach((item) => {
       const key = numberedItemKey(item.type, item.number);
@@ -1518,6 +1717,8 @@ export class SpreadsheetRepository {
       catalog,
       numberedItems,
       holdings,
+      equipmentGroups,
+      equipmentGroupItems,
       movements,
       signatures,
       permissions,
@@ -1551,6 +1752,31 @@ export class SpreadsheetRepository {
     const location = normalizeText(locationValue);
     if (location && !data.settings.locations.includes(location))
       throw new Error("יש לבחור מיקום מרשימת המיקומים בהגדרות.");
+  }
+
+  private normalizedEquipmentGroupInput(
+    input: EquipmentGroupInput,
+  ): EquipmentGroupInput {
+    return {
+      name: normalizeText(input.name),
+      note: normalizeText(input.note),
+      items: input.items.map((item) => ({
+        type: normalizeText(item.type),
+        variant: normalizeText(item.variant),
+        quantity: Number(item.quantity),
+      })),
+    };
+  }
+
+  private currentEquipmentGroup(
+    data: CompanyData,
+    group: EquipmentGroup,
+  ): EquipmentGroup {
+    const current = data.equipmentGroups.find(
+      (candidate) => candidate.name === group.name,
+    );
+    if (!current) throw new Error("הערכה השתנתה או אינה קיימת עוד.");
+    return current;
   }
 
   private currentNumberedItem(

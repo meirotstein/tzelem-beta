@@ -101,6 +101,7 @@ export const scopeCompanyData = (
   const catalogKeys = new Set(
     catalog.map((item) => catalogKey(item.type, item.variant)),
   );
+  const canUseEquipmentGroups = canAccessMethod(access, "כמותי");
   return {
     ...data,
     soldiers,
@@ -115,6 +116,12 @@ export const scopeCompanyData = (
         personalNumbers.has(holding.personalNumber) &&
         catalogKeys.has(catalogKey(holding.type, holding.variant)),
     ),
+    equipmentGroups: canUseEquipmentGroups ? data.equipmentGroups : [],
+    equipmentGroupItems: canUseEquipmentGroups
+      ? data.equipmentGroupItems.filter((item) =>
+          catalogKeys.has(catalogKey(item.type, item.variant)),
+        )
+      : [],
     movements: data.movements.filter((entry) =>
       canAccessMovement(access, entry, data),
     ),

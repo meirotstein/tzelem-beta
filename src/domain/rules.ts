@@ -7,6 +7,10 @@ import {
 import type {
   CatalogInput,
   CatalogItem,
+  CompanyData,
+  EquipmentGroup,
+  EquipmentGroupInput,
+  EquipmentGroupItem,
   ManagementMethod,
   NumberedItem,
   QuantityHolding,
@@ -126,6 +130,41 @@ export const validateCatalogInput = (
   return errors;
 };
 
+export const validateEquipmentGroupInput = (
+  input: EquipmentGroupInput,
+  data: Pick<CompanyData, "catalog" | "equipmentGroups">,
+  original?: EquipmentGroup,
+): string[] => {
+  const errors: string[] = [];
+  const name = normalizeText(input.name);
+  if (!name) errors.push("יש להזין שם ערכה.");
+  if (
+    data.equipmentGroups.some(
+      (group) => group.name === name && group.row !== original?.row,
+    )
+  )
+    errors.push("כבר קיימת ערכה בשם הזה.");
+  if (!input.items.length) errors.push("יש להוסיף לפחות פריט אחד לערכה.");
+  const keys = new Set<string>();
+  input.items.forEach((component) => {
+    const key = catalogKey(component.type, component.variant);
+    if (keys.has(key)) errors.push("אותו פריט מופיע בערכה יותר מפעם אחת.");
+    keys.add(key);
+    if (!Number.isInteger(component.quantity) || component.quantity <= 0)
+      errors.push("כל כמות בערכה חייבת להיות מספר שלם וחיובי.");
+    if (
+      !data.catalog.some(
+        (item) =>
+          item.active &&
+          item.method === "כמותי" &&
+          catalogKey(item.type, item.variant) === key,
+      )
+    )
+      errors.push("כל פריטי הערכה חייבים להיות ציוד כמותי פעיל מהקטלוג.");
+  });
+  return [...new Set(errors)];
+};
+
 export const validateNumberedIdentity = (
   type: string,
   number: string,
@@ -223,6 +262,8 @@ export const canRemoveCatalogItem = (
   item: CatalogItem,
   numberedItems: NumberedItem[],
   holdings: QuantityHolding[],
+  groups: EquipmentGroup[] = [],
+  groupItems: EquipmentGroupItem[] = [],
 ): string | null => {
   if (
     item.method === "צל״מ" &&
@@ -237,6 +278,19 @@ export const canRemoveCatalogItem = (
   }
   if (item.method === "כמותי" && issuedQuantity(item, holdings) > 0)
     return "לא ניתן להסיר סוג ציוד כל עוד קיימות החזקות פעילות.";
+  const activeGroupNames = new Set(
+    groups.filter((group) => group.active).map((group) => group.name),
+  );
+  if (
+    groupItems.some(
+      (component) =>
+        component.active &&
+        activeGroupNames.has(component.groupName) &&
+        catalogKey(component.type, component.variant) ===
+          catalogKey(item.type, item.variant),
+    )
+  )
+    return "לא ניתן להסיר סוג ציוד שמשמש בערכה פעילה.";
   return null;
 };
 

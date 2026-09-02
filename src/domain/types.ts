@@ -55,6 +55,22 @@ export interface QuantityHolding {
   quantity: number;
 }
 
+export interface EquipmentGroup {
+  row: number;
+  name: string;
+  note: string;
+  active: boolean;
+}
+
+export interface EquipmentGroupItem {
+  row: number;
+  groupName: string;
+  type: string;
+  variant: string;
+  quantity: number;
+  active: boolean;
+}
+
 export interface MovementEntry {
   row: number;
   timestamp: string;
@@ -156,6 +172,8 @@ export interface CompanyData {
   catalog: CatalogItem[];
   numberedItems: NumberedItem[];
   holdings: QuantityHolding[];
+  equipmentGroups: EquipmentGroup[];
+  equipmentGroupItems: EquipmentGroupItem[];
   movements: MovementEntry[];
   signatures: SignatureSummary[];
   permissions: PermissionRecord[];
@@ -212,6 +230,16 @@ export interface NumberedItemInput {
   location: string;
   note: string;
   active?: boolean;
+}
+
+export interface EquipmentGroupInput {
+  name: string;
+  note: string;
+  items: Array<{
+    type: string;
+    variant: string;
+    quantity: number;
+  }>;
 }
 
 export interface MovementDraft {

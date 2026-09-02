@@ -58,10 +58,12 @@ const data: CompanyData = {
     },
   ],
   holdings: [],
+  equipmentGroups: [],
+  equipmentGroupItems: [],
   movements: [],
   signatures: [],
   permissions: [],
-  settings: { platoons: ["1"], locations: [], schemaVersion: "7" },
+  settings: { platoons: ["1"], locations: [], schemaVersion: "8" },
 };
 
 describe("saveSigningSession", () => {
@@ -183,7 +185,7 @@ describe("applyAdditiveSchemaUpgrade", () => {
         (value: { userEnteredValue: { stringValue?: string } }) =>
           value.userEnteredValue.stringValue,
       ),
-    ).toEqual(["schema_version", "7"]);
+    ).toEqual(["schema_version", "8"]);
   });
 });
 
@@ -328,7 +330,7 @@ describe("repository permission enforcement", () => {
           platoons: ["1"],
         },
       ],
-      settings: { platoons: ["1", "2"], locations: [], schemaVersion: "7" },
+      settings: { platoons: ["1", "2"], locations: [], schemaVersion: "8" },
     };
 
     await expect(
@@ -594,6 +596,54 @@ describe("repository permission enforcement", () => {
     expect(requests[1].appendCells).toBeTruthy();
   });
 
+  it("creates quantity equipment groups and blocks platoon-scoped editors", async () => {
+    const repository = new SpreadsheetRepository("sheet");
+    const quantityItem = {
+      row: 2,
+      type: "חולצה",
+      variant: "M",
+      variantLabel: "מידה",
+      method: "כמותי" as const,
+      totalStock: 10,
+      location: "",
+      note: "",
+      active: true,
+    };
+    const groupInput = {
+      name: "תיק לאו",
+      note: "ערכה מלאה",
+      items: [{ type: "חולצה", variant: "M", quantity: 2 }],
+    };
+    const allPlatoonsData: CompanyData = {
+      ...data,
+      catalog: [quantityItem],
+    };
+
+    await repository.addEquipmentGroup(allPlatoonsData, groupInput);
+    const requests = batchUpdate.mock.calls[0][0].resource.requests;
+    expect(requests).toHaveLength(3);
+    expect(requests[0].appendCells.rows[0].values[0].userEnteredValue.stringValue)
+      .toBe("תיק לאו");
+    expect(requests[1].appendCells.rows[0].values[3].userEnteredValue.numberValue)
+      .toBe(2);
+
+    const platoonScopedData: CompanyData = {
+      ...allPlatoonsData,
+      permissions: [
+        {
+          row: 2,
+          email: "admin@example.com",
+          admin: false,
+          equipmentScope: "כמותי",
+          platoons: ["1"],
+        },
+      ],
+    };
+    await expect(
+      repository.addEquipmentGroup(platoonScopedData, groupInput),
+    ).rejects.toThrow("מוגבל למחלקות");
+  });
+
   it("saves managed locations and prevents removing a location in use", async () => {
     const repository = new SpreadsheetRepository("sheet");
     const adminData: CompanyData = {
@@ -612,7 +662,7 @@ describe("repository permission enforcement", () => {
     await repository.saveSettings(adminData, {
       platoons: ["1"],
       locations: ["מחסן", "משרד"],
-      schemaVersion: "7",
+      schemaVersion: "8",
     });
     const rows = batchUpdate.mock.calls[0][0].resource.requests[0].updateCells.rows;
     const values = rows.map((row: { values: Array<{ userEnteredValue: { stringValue?: string } }> }) =>
@@ -639,14 +689,14 @@ describe("repository permission enforcement", () => {
       settings: {
         platoons: ["1"],
         locations: ["מחסן"],
-        schemaVersion: "7",
+        schemaVersion: "8",
       },
     };
     await expect(
       repository.saveSettings(usedLocationData, {
         platoons: ["1"],
         locations: [],
-        schemaVersion: "7",
+        schemaVersion: "8",
       }),
     ).rejects.toThrow("לא ניתן להסיר את המיקום מחסן");
   });

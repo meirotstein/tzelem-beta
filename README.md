@@ -50,13 +50,15 @@ The OAuth client must allow the local and deployed web origins.
 
 ## Spreadsheet setup
 
-An editor opening a truly empty spreadsheet can explicitly choose **הכנת הגיליון למת״ש**. The app creates the required `חיילים`, `קטלוג`, `פריטי צל״מ`, `החזקות כמותיות`, `תנועות`, `חתימות`, `הרשאות`, and `הגדרות` tabs.
+An editor opening a truly empty spreadsheet can explicitly choose **הכנת הגיליון למת״ש**. The app creates the required `חיילים`, `קטלוג`, `פריטי צל״מ`, `החזקות כמותיות`, `ערכות`, `פריטי ערכה`, `תנועות`, `חתימות`, `הרשאות`, and `הגדרות` tabs.
 
 The catalog defines whether each type is `צל״מ` or `כמותי`. It may also define an optional characteristic name and value—for example `מידה` + `M`; both remain empty when not relevant. Quantity-managed types and individual numbered `צל״מ` items may select an optional location from the managed location list in `הגדרות`. Every catalog entry may also define an optional non-negative integer `תקן`: the actual quantity is the total stock for quantity-managed equipment and the count of active numbered items for `צל״מ`. The dashboard and inventory show shortages against this value. All quantity values use the fixed display label `יח׳`. Current assignments are materialized in `פריטי צל״מ` and `החזקות כמותיות`; `תנועות` is an append-only audit trail and is not replayed to calculate current state.
 
 Soldier phone numbers are optional. From a soldier profile, recent equipment movements can be shared as a WhatsApp draft for the last 10 minutes, today, or a custom range. If a phone number is stored, the draft is addressed directly to it.
 
 The `החתמות` screen provides a single-session workflow: find a soldier with fuzzy search and edit their complete signed-equipment draft. `שמירת ההחתמה` opens a required touch-signature canvas; after the soldier signs, current-state changes, movement rows, the exact approved snapshot, and normalized signature strokes are saved together in one Sheets batch. A WhatsApp receipt for exactly that session is offered only after the save succeeds.
+
+Equipment groups are reusable quantity-only signing templates. Users with quantity access and no platoon restriction manage them from `מלאי`; platoon-scoped quantity users may use active groups. Adding a group to a signing draft adds its components as ordinary editable quantity lines and fails atomically when any component lacks stock.
 
 Saved signatures can be viewed from the soldier profile and from grouped signing-operation cards in `תנועות`. Normal loading reads only the lightweight signature index; the snapshot and stroke JSON for a single row are fetched and validated only when `הצגת חתימה` is selected, then cached in memory.
 

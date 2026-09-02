@@ -45,6 +45,8 @@ import type {
   CatalogItem,
   CompanyData,
   EquipmentStatus,
+  EquipmentGroup,
+  EquipmentGroupInput,
   LoadResult,
   ManagementMethod,
   MovementEntry,
@@ -277,6 +279,7 @@ export function App() {
   const [signingDirty, setSigningDirty] = useState(false);
   const [soldierDetail, setSoldierDetail] = useState<Soldier | null>(null);
   const [catalogDetail, setCatalogDetail] = useState<CatalogItem | null>(null);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const [movementShareSoldier, setMovementShareSoldier] =
     useState<Soldier | null>(null);
   const [signingReceipt, setSigningReceipt] = useState<{
@@ -830,6 +833,7 @@ export function App() {
               })
             }
             onRequestConfirmation={setConfirmation}
+            onError={setError}
             onSave={async (soldier, input) => {
               let movements: MovementEntry[] = [];
               const ok = await mutate(async (current, repository) => {
@@ -854,6 +858,7 @@ export function App() {
             editable={data.meta.editable}
             access={access}
             onAddCatalog={() => setCatalogForm("new")}
+            onManageGroups={() => setGroupsOpen(true)}
             onAddNumbered={() => {
               setNumberedFormOrigin(null);
               setNumberedForm("new");
@@ -867,7 +872,13 @@ export function App() {
             onAction={handleInventoryAction}
             onCatalogToggle={(item) => {
               const issue = item.active
-                ? canRemoveCatalogItem(item, data.numberedItems, data.holdings)
+                ? canRemoveCatalogItem(
+                    item,
+                    data.numberedItems,
+                    data.holdings,
+                    data.equipmentGroups,
+                    data.equipmentGroupItems,
+                  )
                 : null;
               if (issue) return setError(issue);
               setConfirmation({
@@ -1004,6 +1015,45 @@ export function App() {
           }}
         />
       )}
+      {groupsOpen &&
+        hasAllPlatoons(access) &&
+        canAccessMethod(access, "כמותי") && (
+          <EquipmentGroupsModal
+            data={visibleData}
+            editable={data.meta.editable}
+            saving={saving}
+            onClose={() => setGroupsOpen(false)}
+            onSave={(group, input) =>
+              mutate(
+                (current, repository) =>
+                  group
+                    ? repository.editEquipmentGroup(current, group, input)
+                    : repository.addEquipmentGroup(current, input),
+                group ? "הערכה נשמרה" : "הערכה נוספה",
+              )
+            }
+            onToggle={(group) =>
+              setConfirmation({
+                title: group.active ? "הסרת ערכת ציוד" : "הפעלת ערכה מחדש",
+                message: group.active
+                  ? `להסיר את הערכה ${group.name}? הגדרת הערכה תישמר.`
+                  : `להפעיל מחדש את הערכה ${group.name}?`,
+                confirmLabel: group.active ? "הסרה" : "הפעלה מחדש",
+                danger: group.active,
+                onConfirm: () =>
+                  void mutate(
+                    (current, repository) =>
+                      repository.setEquipmentGroupActive(
+                        current,
+                        group,
+                        !group.active,
+                      ),
+                    group.active ? "הערכה הוסרה" : "הערכה הופעלה",
+                  ),
+              })
+            }
+          />
+        )}
       {numberedForm &&
         canAccessMethod(access, "צל״מ") &&
         (numberedForm === "new" || hasAllPlatoons(access)) && (
@@ -1613,6 +1663,7 @@ function SigningsView({
   onDirtyChange,
   onRequestDiscard,
   onRequestConfirmation,
+  onError,
   onSave,
 }: {
   data: CompanyData;
@@ -1628,6 +1679,7 @@ function SigningsView({
   onDirtyChange: (dirty: boolean) => void;
   onRequestDiscard: (onConfirm: () => void) => void;
   onRequestConfirmation: (request: ConfirmationRequest) => void;
+  onError: (message: string) => void;
   onSave: (soldier: Soldier, input: SigningSessionInput) => Promise<boolean>;
 }) {
   const [query, setQuery] = useState("");
@@ -1642,6 +1694,7 @@ function SigningsView({
   const [numberedToAdd, setNumberedToAdd] = useState("");
   const [quantityToAdd, setQuantityToAdd] = useState("");
   const [addQuantity, setAddQuantity] = useState("1");
+  const [groupToAdd, setGroupToAdd] = useState("");
   const [pendingInitialItem, setPendingInitialItem] =
     useState<SigningSeed | null>(initialItem);
   const [pendingSigning, setPendingSigning] = useState<Omit<
@@ -1887,6 +1940,7 @@ function SigningsView({
       !selectedNumbered.has(numberedItemKey(item.type, item.number)),
   );
   const quantityCatalog = activeCatalogItemsForMethod(data.catalog, "כמותי");
+  const activeGroups = data.equipmentGroups.filter((group) => group.active);
   const currentQuantity = (item: CatalogItem) =>
     data.holdings.find(
       (holding) =>
@@ -2061,6 +2115,105 @@ function SigningsView({
       {editable && (
         <section className="panel signing-add-panel">
           <h2>הוספת ציוד להחתמה</h2>
+          {activeGroups.length > 0 && (
+            <div className="signing-group-add">
+              <Field label="ערכת ציוד">
+                <select
+                  value={groupToAdd}
+                  onChange={(event) => setGroupToAdd(event.target.value)}
+                >
+                  <option value="">בחירה</option>
+                  {activeGroups.map((group) => (
+                    <option key={group.name} value={group.name}>
+                      {group.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {groupToAdd && (
+                <div className="group-component-summary">
+                  {data.equipmentGroupItems
+                    .filter(
+                      (component) =>
+                        component.active && component.groupName === groupToAdd,
+                    )
+                    .map((component) => {
+                      const item = quantityCatalog.find(
+                        (candidate) =>
+                          catalogKey(candidate.type, candidate.variant) ===
+                          catalogKey(component.type, component.variant),
+                      );
+                      return (
+                        <span
+                          key={catalogKey(component.type, component.variant)}
+                        >
+                          {itemLabel(
+                            component.type,
+                            component.variant,
+                            item?.variantLabel,
+                          )} {component.quantity} יח׳
+                        </span>
+                      );
+                    })}
+                </div>
+              )}
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={!groupToAdd}
+                onClick={() => {
+                  const components = data.equipmentGroupItems.filter(
+                    (component) =>
+                      component.active && component.groupName === groupToAdd,
+                  );
+                  const additions = components.flatMap((component) => {
+                    const item = quantityCatalog.find(
+                      (candidate) =>
+                        catalogKey(candidate.type, candidate.variant) ===
+                        catalogKey(component.type, component.variant),
+                    );
+                    if (!item) return [];
+                    const key = catalogKey(item.type, item.variant);
+                    const currentTarget = Number(
+                      quantityValues[key] ?? currentQuantity(item),
+                    );
+                    const next = currentTarget + component.quantity;
+                    const maximum =
+                      currentQuantity(item) +
+                      availableQuantity(item, data.holdings);
+                    return [{ item, key, next, maximum }];
+                  });
+                  const shortages = additions.filter(
+                    (addition) => addition.next > addition.maximum,
+                  );
+                  if (shortages.length || additions.length !== components.length) {
+                    const details = shortages
+                      .map(
+                        ({ item, next, maximum }) =>
+                          `${itemLabel(item.type, item.variant, item.variantLabel)} — חסרות ${next - maximum} יח׳`,
+                      )
+                      .join(", ");
+                    onError(
+                      details
+                        ? `לא ניתן להוסיף את הערכה. ${details}`
+                        : "לא ניתן להוסיף את הערכה כי אחד מפריטיה אינו זמין.",
+                    );
+                    return;
+                  }
+                  setQuantityValues((current) => {
+                    const next = { ...current };
+                    additions.forEach((addition) => {
+                      next[addition.key] = String(addition.next);
+                    });
+                    return next;
+                  });
+                  setGroupToAdd("");
+                }}
+              >
+                הוספת ערכה להחתמה
+              </button>
+            </div>
+          )}
           <div className="signing-add-grid">
             <div>
               <Field label="פריט צל״מ זמין">
@@ -2235,6 +2388,7 @@ function InventoryView({
   editable,
   access,
   onAddCatalog,
+  onManageGroups,
   onAddNumbered,
   onCatalog,
   onCatalogEdit,
@@ -2248,6 +2402,7 @@ function InventoryView({
   editable: boolean;
   access: UserAccess;
   onAddCatalog: () => void;
+  onManageGroups: () => void;
   onAddNumbered: () => void;
   onCatalog: (item: CatalogItem) => void;
   onCatalogEdit: (item: CatalogItem) => void;
@@ -2330,9 +2485,19 @@ function InventoryView({
           {editable && (
             <>
               {canManageInventory && (
-                <button className="secondary-button" onClick={onAddCatalog}>
-                  סוג ציוד חדש
-                </button>
+                <>
+                  {canAccessMethod(access, "כמותי") && (
+                    <button
+                      className="secondary-button"
+                      onClick={onManageGroups}
+                    >
+                      ערכות ציוד
+                    </button>
+                  )}
+                  <button className="secondary-button" onClick={onAddCatalog}>
+                    סוג ציוד חדש
+                  </button>
+                </>
               )}
               {canAccessMethod(access, "צל״מ") && (
                 <button className="primary-button" onClick={onAddNumbered}>
@@ -3146,6 +3311,294 @@ function SoldierFormModal({
             ביטול
           </button>
           <button className="primary-button" disabled={saving}>
+            שמירה
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EquipmentGroupsModal({
+  data,
+  editable,
+  saving,
+  onClose,
+  onSave,
+  onToggle,
+}: {
+  data: CompanyData;
+  editable: boolean;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (
+    group: EquipmentGroup | undefined,
+    input: EquipmentGroupInput,
+  ) => Promise<boolean>;
+  onToggle: (group: EquipmentGroup) => void;
+}) {
+  const [editing, setEditing] = useState<EquipmentGroup | "new" | null>(null);
+  if (editing) {
+    return (
+      <EquipmentGroupFormModal
+        data={data}
+        group={editing === "new" ? undefined : editing}
+        saving={saving}
+        onClose={() => setEditing(null)}
+        onSave={async (input) => {
+          const saved = await onSave(
+            editing === "new" ? undefined : editing,
+            input,
+          );
+          if (saved) setEditing(null);
+        }}
+      />
+    );
+  }
+  return (
+    <Modal title="ערכות ציוד" onClose={onClose}>
+      <div className="section-heading">
+        <p>ערכות מוסיפות כמה פריטים כמותיים יחד לטיוטת ההחתמה.</p>
+        {editable && (
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => setEditing("new")}
+          >
+            ערכה חדשה
+          </button>
+        )}
+      </div>
+      <div className="cards-list compact">
+        {data.equipmentGroups.map((group) => {
+          const components = data.equipmentGroupItems.filter(
+            (item) => item.groupName === group.name && item.active,
+          );
+          const total = components.reduce(
+            (sum, item) => sum + item.quantity,
+            0,
+          );
+          return (
+            <article
+              className={`list-card ${group.active ? "" : "archived"}`}
+              key={group.name}
+            >
+              <div>
+                <strong>{group.name}</strong>
+                <p>
+                  {components.length} סוגי ציוד · {total} יח׳
+                </p>
+                {group.note && <small>{group.note}</small>}
+                <div className="group-component-summary">
+                  {components.map((component) => {
+                    const catalog = data.catalog.find(
+                      (item) =>
+                        catalogKey(item.type, item.variant) ===
+                        catalogKey(component.type, component.variant),
+                    );
+                    return (
+                      <span key={catalogKey(component.type, component.variant)}>
+                        {itemLabel(
+                          component.type,
+                          component.variant,
+                          catalog?.variantLabel,
+                        )} {component.quantity} יח׳
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+              {editable && (
+                <div className="card-actions">
+                  <button
+                    type="button"
+                    className="small-button"
+                    onClick={() => setEditing(group)}
+                  >
+                    עריכה
+                  </button>
+                  <button
+                    type="button"
+                    className="small-button danger-text"
+                    onClick={() => onToggle(group)}
+                  >
+                    {group.active ? "הסרה" : "הפעלה"}
+                  </button>
+                </div>
+              )}
+            </article>
+          );
+        })}
+        {!data.equipmentGroups.length && <EmptyList>לא הוגדרו ערכות.</EmptyList>}
+      </div>
+    </Modal>
+  );
+}
+
+function EquipmentGroupFormModal({
+  data,
+  group,
+  saving,
+  onClose,
+  onSave,
+}: {
+  data: CompanyData;
+  group?: EquipmentGroup;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (input: EquipmentGroupInput) => void;
+}) {
+  const catalog = activeCatalogItemsForMethod(data.catalog, "כמותי");
+  const initialItems = group
+    ? data.equipmentGroupItems
+        .filter((item) => item.groupName === group.name && item.active)
+        .map((item) => ({
+          key: catalogKey(item.type, item.variant),
+          quantity: String(item.quantity),
+        }))
+    : [];
+  const [name, setName] = useState(group?.name || "");
+  const [note, setNote] = useState(group?.note || "");
+  const [items, setItems] = useState(initialItems);
+  const [selectedKey, setSelectedKey] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const selectedKeys = new Set(items.map((item) => item.key));
+  const parsedItems = items.flatMap((component) => {
+    const item = catalog.find(
+      (candidate) => catalogKey(candidate.type, candidate.variant) === component.key,
+    );
+    return item
+      ? [{ type: item.type, variant: item.variant, quantity: Number(component.quantity) }]
+      : [];
+  });
+  const formValid =
+    Boolean(name.trim()) &&
+    parsedItems.length > 0 &&
+    parsedItems.length === items.length &&
+    parsedItems.every(
+      (item) => Number.isInteger(item.quantity) && item.quantity > 0,
+    );
+  return (
+    <Modal title={group ? `עריכת ${group.name}` : "ערכה חדשה"} onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (formValid) onSave({ name, note, items: parsedItems });
+        }}
+      >
+        <Field label="שם ערכה">
+          <input
+            required
+            disabled={Boolean(group)}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+        <Field label="הערה (אופציונלי)">
+          <textarea value={note} onChange={(event) => setNote(event.target.value)} />
+        </Field>
+        <h3>פריטי הערכה</h3>
+        <div className="group-form-items">
+          {items.map((component) => {
+            const item = catalog.find(
+              (candidate) =>
+                catalogKey(candidate.type, candidate.variant) === component.key,
+            );
+            return (
+              <div className="group-form-item" key={component.key}>
+                <span>
+                  {item
+                    ? itemLabel(item.type, item.variant, item.variantLabel)
+                    : "פריט לא זמין"}
+                </span>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  aria-label={`כמות ${item?.type || "פריט"}`}
+                  value={component.quantity}
+                  onChange={(event) =>
+                    setItems((current) =>
+                      current.map((candidate) =>
+                        candidate.key === component.key
+                          ? { ...candidate, quantity: event.target.value }
+                          : candidate,
+                      ),
+                    )
+                  }
+                />
+                <button
+                  type="button"
+                  className="small-button danger-text"
+                  onClick={() =>
+                    setItems((current) =>
+                      current.filter((candidate) => candidate.key !== component.key),
+                    )
+                  }
+                >
+                  הסרה
+                </button>
+              </div>
+            );
+          })}
+          {!items.length && <EmptyList>יש להוסיף לפחות פריט אחד.</EmptyList>}
+        </div>
+        <div className="group-add-row">
+          <Field label="ציוד כמותי">
+            <select
+              value={selectedKey}
+              onChange={(event) => setSelectedKey(event.target.value)}
+            >
+              <option value="">בחירה</option>
+              {catalog
+                .filter(
+                  (item) =>
+                    !selectedKeys.has(catalogKey(item.type, item.variant)),
+                )
+                .map((item) => (
+                  <option
+                    key={catalogKey(item.type, item.variant)}
+                    value={catalogKey(item.type, item.variant)}
+                  >
+                    {itemLabel(item.type, item.variant, item.variantLabel)}
+                  </option>
+                ))}
+            </select>
+          </Field>
+          <Field label="כמות">
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value)}
+            />
+          </Field>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={
+              !selectedKey ||
+              !Number.isInteger(Number(quantity)) ||
+              Number(quantity) <= 0
+            }
+            onClick={() => {
+              setItems((current) => [
+                ...current,
+                { key: selectedKey, quantity },
+              ]);
+              setSelectedKey("");
+              setQuantity("1");
+            }}
+          >
+            הוספה לערכה
+          </button>
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            ביטול
+          </button>
+          <button className="primary-button" disabled={saving || !formValid}>
             שמירה
           </button>
         </div>

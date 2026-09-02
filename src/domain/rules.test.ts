@@ -9,6 +9,7 @@ import {
   fuzzyScore,
   soldiersWithoutEquipment,
   validateCatalogInput,
+  validateEquipmentGroupInput,
   validateNumberedIdentity,
   validateSoldierInput,
   validateStatusChange,
@@ -83,7 +84,7 @@ describe("spreadsheet compatibility", () => {
       validateHeaders(partialMeta, {
         חיילים: [[...SHEET_SCHEMAS.soldiers.headers]],
       }),
-    ).toHaveLength(7);
+    ).toHaveLength(9);
   });
 
   it("offers an additive upgrade for a missing tab or trailing column", () => {
@@ -126,6 +127,23 @@ describe("spreadsheet compatibility", () => {
         headers: ["תקן"],
       },
       { sheetTitle: "פריטי צל״מ", startColumn: 7, headers: ["מיקום"] },
+    ]);
+  });
+
+  it("offers an additive upgrade for the equipment-group tabs", () => {
+    const groupTitles = new Set(["ערכות", "פריטי ערכה"]);
+    const previousMeta = {
+      ...meta,
+      sheets: sheets.filter((sheet) => !groupTitles.has(sheet.title)),
+    };
+    const values = Object.fromEntries(
+      Object.values(SHEET_SCHEMAS)
+        .filter((schema) => !groupTitles.has(schema.title))
+        .map((schema) => [schema.title, [[...schema.headers]]]),
+    );
+    expect(additiveSchemaUpgrade(previousMeta, values)?.missingSheets).toEqual([
+      "ערכות",
+      "פריטי ערכה",
     ]);
   });
 
@@ -273,6 +291,37 @@ describe("domain invariants", () => {
     ).toBeNull();
   });
 
+  it("accepts only unique active quantity items in equipment groups", () => {
+    const data = {
+      catalog: [quantity],
+      equipmentGroups: [{ row: 2, name: "ערכה קיימת", note: "", active: true }],
+    };
+    const valid = {
+      name: "תיק לאו",
+      note: "",
+      items: [{ type: quantity.type, variant: quantity.variant, quantity: 2 }],
+    };
+    expect(validateEquipmentGroupInput(valid, data)).toHaveLength(0);
+    expect(
+      validateEquipmentGroupInput(
+        { ...valid, items: [...valid.items, ...valid.items] },
+        data,
+      ),
+    ).toContain("אותו פריט מופיע בערכה יותר מפעם אחת.");
+    expect(
+      validateEquipmentGroupInput(
+        { ...valid, items: [{ ...valid.items[0], quantity: 0 }] },
+        data,
+      ),
+    ).toContain("כל כמות בערכה חייבת להיות מספר שלם וחיובי.");
+    expect(
+      validateEquipmentGroupInput(
+        { ...valid, name: "ערכה קיימת" },
+        data,
+      ),
+    ).toContain("כבר קיימת ערכה בשם הזה.");
+  });
+
   it("returns only active catalog items for the requested management method", () => {
     const numberedCatalog = { ...quantity, row: 3, type: "נשק", method: "צל״מ" as const };
     const inactiveNumbered = { ...numberedCatalog, row: 4, type: "קסדה", active: false };
@@ -294,6 +343,20 @@ describe("domain invariants", () => {
     expect(canRemoveCatalogItem(quantity, [], holdings)).toContain(
       "החזקות פעילות",
     );
+    expect(
+      canRemoveCatalogItem(quantity, [], [], [
+        { row: 2, name: "ערכה", note: "", active: true },
+      ], [
+        {
+          row: 2,
+          groupName: "ערכה",
+          type: quantity.type,
+          variant: quantity.variant,
+          quantity: 1,
+          active: true,
+        },
+      ]),
+    ).toContain("ערכה פעילה");
   });
 
   it("counts soldiers with neither numbered nor quantity equipment", () => {

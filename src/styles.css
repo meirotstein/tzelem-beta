@@ -773,6 +773,54 @@ textarea::placeholder {
   grid-template-columns: 1fr 1fr;
   gap: 14px;
 }
+.signing-group-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #b8d9de;
+  border-radius: 12px;
+  background: #f1f8f9;
+}
+.signing-group-add .group-component-summary {
+  grid-column: 1 / -1;
+}
+.group-component-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+.group-component-summary span {
+  padding: 4px 7px;
+  border-radius: 7px;
+  background: #edf4f5;
+  color: #526b72;
+  font-size: 12px;
+}
+.group-form-items {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.group-form-item,
+.group-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px auto;
+  align-items: end;
+  gap: 8px;
+}
+.group-form-item {
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #dce5e7;
+  border-radius: 10px;
+}
+.group-form-item input {
+  width: 100%;
+}
 .selected-signing-item {
   display: grid;
   gap: 3px;
@@ -1363,6 +1411,18 @@ textarea::placeholder {
   }
   .signing-add-grid {
     grid-template-columns: 1fr;
+  }
+  .signing-group-add {
+    grid-template-columns: 1fr;
+  }
+  .signing-group-add .group-component-summary {
+    grid-column: auto;
+  }
+  .group-add-row {
+    grid-template-columns: minmax(0, 1fr) 82px;
+  }
+  .group-add-row button {
+    grid-column: 1 / -1;
   }
   .signing-save-bar {
     bottom: 72px;

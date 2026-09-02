@@ -77,13 +77,15 @@ const data = {
   holdings: [
     { row: 2, personalNumber: "1", type: "חולצה", variant: "M", quantity: 2 },
   ],
+  equipmentGroups: [],
+  equipmentGroupItems: [],
   movements: [],
   signatures: [],
   permissions: [],
   settings: {
     platoons: ["א", "ב"],
     locations: ["מחסן פלוגתי"],
-    schemaVersion: "7",
+    schemaVersion: "8",
   },
   meta: {
     spreadsheetId: "x",

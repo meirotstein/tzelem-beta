@@ -93,17 +93,31 @@ describe("permissions", () => {
         { row: 3, type: "נשק", variant: "", number: "11", status: "משויך", assignedTo: "2", location: "מחסן", note: "", active: true },
       ],
       holdings: [],
+      equipmentGroups: [{ row: 2, name: "ערכה", note: "", active: true }],
+      equipmentGroupItems: [
+        { row: 2, groupName: "ערכה", type: "חולצה", variant: "", quantity: 2, active: true },
+      ],
       movements: [],
       signatures: [],
       permissions: [],
-      settings: { platoons: ["1", "2"], locations: ["מחסן"], schemaVersion: "7" },
+      settings: { platoons: ["1", "2"], locations: ["מחסן"], schemaVersion: "8" },
     } satisfies CompanyData;
 
     const scoped = scopeCompanyData(data, access);
     expect(scoped.soldiers.map((soldier) => soldier.personalNumber)).toEqual(["1"]);
     expect(scoped.catalog.map((item) => item.method)).toEqual(["צל״מ"]);
     expect(scoped.numberedItems.map((item) => item.number)).toEqual(["10"]);
+    expect(scoped.equipmentGroups).toEqual([]);
     expect(scoped.settings.platoons).toEqual(["1"]);
     expect(scoped.permissions).toEqual([]);
+
+    const quantityScoped = scopeCompanyData(data, {
+      ...access,
+      equipmentScope: "כמותי",
+    });
+    expect(quantityScoped.equipmentGroups.map((group) => group.name)).toEqual([
+      "ערכה",
+    ]);
+    expect(quantityScoped.equipmentGroupItems).toHaveLength(1);
   });
 });

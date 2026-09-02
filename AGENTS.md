@@ -75,6 +75,22 @@ Required tabs and columns:
 3. `ערך מאפיין`
 4. `כמות`
 
+### `ערכות`
+
+1. `שם ערכה`
+2. `הערה`
+3. `פעיל`
+
+### `פריטי ערכה`
+
+1. `שם ערכה`
+2. `סוג`
+3. `ערך מאפיין`
+4. `כמות`
+5. `פעיל`
+
+Equipment-group names are mandatory and unique operational keys; do not add an opaque group ID. A group contains at least one active quantity-managed catalog item, each with a positive integer quantity. Group definitions are archived/reactivated rather than deleted. Only users with quantity access and no platoon restriction may create, edit, archive, or reactivate definitions. Platoon-scoped users with quantity access may use active groups in signing drafts. Adding a group is atomic: if any component lacks stock, add none of its components and show the shortages. Once added, components behave as independent quantity draft lines.
+
 ### `תנועות`
 
 1. `חותמת זמן`
@@ -112,7 +128,7 @@ Each signing session has one signature row. `פרטי ההחתמה` is a JSON sn
 
 ### `הגדרות`
 
-Contains managed platoon and equipment-location lists plus `schema_version` (currently `7`). Equipment types, optional characteristics, and standards are managed in `קטלוג`.
+Contains managed platoon and equipment-location lists plus `schema_version` (currently `8`). Equipment types, optional characteristics, standards, and equipment groups are managed from `מלאי`.
 
 Keep the schema definition centralized in code. Reads and writes must target headers by the validated contract rather than relying on unexplained numeric offsets throughout the UI.
 
@@ -120,7 +136,7 @@ Keep the schema definition centralized in code. Reads and writes must target hea
 
 - Inspect spreadsheet metadata and relevant bounded ranges before any write.
 - Offer **הכנת הגיליון למת״ש** only when the spreadsheet is truly empty and the signed-in user can edit it.
-- Setup must require explicit user confirmation before creating the eight tabs and their headers.
+- Setup must require explicit user confirmation before creating the ten tabs and their headers.
 - Never treat a non-empty spreadsheet as empty merely because expected tabs are missing.
 - Treat a structural difference as safely upgradeable only when it can be resolved by adding a required missing tab or adding required trailing columns whose existing headers still match in order. Show the exact additions and offer editors an explicit **השלמת מבנה הגיליון** action. Apply all additions and the schema-version update in one Sheets batch; never delete, move, rename, or overwrite existing data.
 - If a non-empty spreadsheet has reordered, renamed, conflicting, or otherwise incompatible headers, do not create, migrate, rename, delete, or rewrite tabs. Show a distinct incompatibility message, for example: **מבנה הגיליון אינו תואם למת״ש. לא בוצעו שינויים.**
