@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeCatalogItemsForMethod,
   availableQuantity,
   canRemoveCatalogItem,
   canRemoveSoldier,
@@ -221,6 +222,19 @@ describe("domain invariants", () => {
         { ...quantity, type: input.type, variant: "" },
       ]),
     ).toContain("השילוב של סוג וערך מאפיין כבר קיים בקטלוג.");
+  });
+
+  it("returns only active catalog items for the requested management method", () => {
+    const numberedCatalog = { ...quantity, row: 3, type: "נשק", method: "צל״מ" as const };
+    const inactiveNumbered = { ...numberedCatalog, row: 4, type: "קסדה", active: false };
+    const missingType = { ...numberedCatalog, row: 5, type: "", variant: "M4" };
+
+    expect(
+      activeCatalogItemsForMethod(
+        [quantity, numberedCatalog, inactiveNumbered, missingType],
+        "צל״מ",
+      ).map((item) => item.type),
+    ).toEqual(["נשק"]);
   });
 
   it("calculates quantity availability and blocks removal while held", () => {

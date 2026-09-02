@@ -186,6 +186,7 @@ For operations that update current state and append history, minimize partial wr
 - After selecting a soldier, show the complete current signed-equipment state: every assigned `צל״מ` item and every positive quantity holding.
 - Treat edits as a local draft. Allow removing `צל״מ`, changing or zeroing quantities, and adding available `צל״מ` or quantity equipment.
 - Label equipment-addition actions `הוספה להחתמה` so they are not confused with creating inventory records.
+- Quantity-to-add inputs must allow temporarily empty text while editing and validate a positive integer only when applying the addition.
 - Pressing `שמירת ההחתמה` opens a required finger-signature canvas and does not write yet. Allow clearing or cancelling the signature.
 - Save only after a meaningful signature is present. Save the complete draft as one atomic Sheets batch containing all current-state updates, matching movement rows, the exact operation snapshot, and the normalized signature strokes. Do not write each edit as it is made.
 - After a successful save, show a WhatsApp confirmation containing exactly the changes in that signing session and the action performer. Use the soldier's phone when present; otherwise open the contact picker.
@@ -222,6 +223,9 @@ Prominent actions:
 
 - Show numbered items with status/current holder and quantity catalog entries with total, held, and available quantities.
 - Add, edit, remove/reactivate, issue, return, and transfer both management methods; numbered items also support status changes, and quantity items support stock adjustment.
+- The new numbered-item form lists active `צל״מ` catalog types only, never quantity-managed types.
+- The new catalog-type form defaults to `כמותי` when that method is available to the user.
+- Starting an issue from an available inventory item must open the `החתמות` workflow with that item preselected after soldier selection, including the required manual signature and WhatsApp receipt.
 - Provide WhatsApp sharing for exactly the filtered numbered and quantity inventory, including current holders.
 
 ### History

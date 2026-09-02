@@ -713,6 +713,22 @@ textarea::placeholder {
   grid-template-columns: 1fr 1fr;
   gap: 14px;
 }
+.selected-signing-item {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #b8d9de;
+  border-radius: 10px;
+  background: #edf7f8;
+  color: #31545d;
+}
+.selected-signing-item strong {
+  color: #174b56;
+}
+.selected-signing-item small {
+  color: #627d86;
+}
 .signing-add-grid > div {
   display: grid;
   align-content: start;

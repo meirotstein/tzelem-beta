@@ -7,11 +7,21 @@ import {
 import type {
   CatalogInput,
   CatalogItem,
+  ManagementMethod,
   NumberedItem,
   QuantityHolding,
   Soldier,
   SoldierInput,
 } from "./types";
+
+export const activeCatalogItemsForMethod = (
+  catalog: CatalogItem[],
+  method: ManagementMethod,
+): CatalogItem[] =>
+  catalog.filter(
+    (item) =>
+      item.active && item.method === method && Boolean(normalizeText(item.type)),
+  );
 
 export const validateSoldierInput = (
   input: SoldierInput,

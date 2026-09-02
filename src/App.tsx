@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import {
+  activeCatalogItemsForMethod,
   availableQuantity,
   canRemoveCatalogItem,
   canRemoveNumberedItem,
@@ -91,6 +92,9 @@ type Action =
     }
   | { kind: "stock"; item: CatalogItem }
   | null;
+type SigningSeed =
+  | { kind: "numbered"; item: NumberedItem }
+  | { kind: "quantity"; item: CatalogItem };
 type SignatureViewerState = {
   key: string;
   summary: SignatureSummary;
@@ -202,6 +206,7 @@ export function App() {
     null,
   );
   const [action, setAction] = useState<Action>(null);
+  const [signingSeed, setSigningSeed] = useState<SigningSeed | null>(null);
   const [soldierDetail, setSoldierDetail] = useState<Soldier | null>(null);
   const [catalogDetail, setCatalogDetail] = useState<CatalogItem | null>(null);
   const [movementShareSoldier, setMovementShareSoldier] =
@@ -223,6 +228,13 @@ export function App() {
     if (!data || !access) return null;
     return scopeCompanyData(data, access);
   }, [access, data]);
+  const operationData = useMemo<CompanyData | null>(() => {
+    if (!data || !visibleData) return null;
+    return {
+      ...visibleData,
+      holdings: data.holdings,
+    };
+  }, [data, visibleData]);
   useEffect(() => {
     if (view === "settings" && access && !access.admin) setView("dashboard");
   }, [access, view]);
@@ -230,6 +242,33 @@ export function App() {
     () => (spreadsheetId ? new SpreadsheetRepository(spreadsheetId) : null),
     [spreadsheetId],
   );
+
+  function openSignings(seed: SigningSeed | null = null) {
+    setSigningSeed(seed);
+    setView("signings");
+  }
+
+  function handleInventoryAction(nextAction: Exclude<Action, null>) {
+    if (
+      nextAction.kind === "numbered" &&
+      nextAction.mode === "assign" &&
+      !nextAction.item.assignedTo
+    ) {
+      setCatalogDetail(null);
+      openSignings({ kind: "numbered", item: nextAction.item });
+      return;
+    }
+    if (
+      nextAction.kind === "quantity" &&
+      nextAction.mode === "issue" &&
+      !nextAction.soldier
+    ) {
+      setCatalogDetail(null);
+      openSignings({ kind: "quantity", item: nextAction.item });
+      return;
+    }
+    setAction(nextAction);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -556,11 +595,7 @@ export function App() {
         </main>
       </ShellHeader>
     );
-  if (!data || !visibleData || !access) return null;
-  const operationData: CompanyData = {
-    ...visibleData,
-    holdings: data.holdings,
-  };
+  if (!data || !visibleData || !operationData || !access) return null;
 
   return (
     <div className="app-shell" dir="rtl">
@@ -612,7 +647,7 @@ export function App() {
             onView={setView}
             onAddSoldier={() => setSoldierForm("new")}
             onAddNumbered={() => setNumberedForm("new")}
-            onIssue={() => setView("signings")}
+            onIssue={() => openSignings()}
           />
         )}
         {view === "soldiers" && (
@@ -649,6 +684,8 @@ export function App() {
             data={operationData}
             editable={data.meta.editable}
             saving={saving}
+            initialItem={signingSeed}
+            onInitialItemApplied={() => setSigningSeed(null)}
             onSave={async (soldier, input) => {
               let movements: MovementEntry[] = [];
               const ok = await mutate(async (current, repository) => {
@@ -674,7 +711,7 @@ export function App() {
             onCatalog={setCatalogDetail}
             onCatalogEdit={setCatalogForm}
             onNumberedEdit={setNumberedForm}
-            onAction={setAction}
+            onAction={handleInventoryAction}
             onCatalogToggle={(item) => {
               const issue = item.active
                 ? canRemoveCatalogItem(item, data.numberedItems, data.holdings)
@@ -756,7 +793,10 @@ export function App() {
           <button
             key={id}
             className={view === id ? "active" : ""}
-            onClick={() => setView(id)}
+            onClick={() => {
+              setSigningSeed(null);
+              setView(id);
+            }}
           >
             {label}
           </button>
@@ -810,7 +850,13 @@ export function App() {
         canAccessMethod(access, "צל״מ") &&
         (numberedForm === "new" || hasAllPlatoons(access)) && (
         <NumberedFormModal
-          data={operationData}
+          data={{
+            ...operationData,
+            catalog: activeCatalogItemsForMethod(
+              operationData.catalog,
+              "צל״מ",
+            ),
+          }}
           item={numberedForm === "new" ? undefined : numberedForm}
           saving={saving}
           onClose={() => setNumberedForm(null)}
@@ -998,7 +1044,7 @@ export function App() {
             canAccessMethod(access, "כמותי") && hasAllPlatoons(access)
           }
           onClose={() => setCatalogDetail(null)}
-          onAction={setAction}
+          onAction={handleInventoryAction}
         />
       )}
     </div>
@@ -1362,11 +1408,15 @@ function SigningsView({
   data,
   editable,
   saving,
+  initialItem,
+  onInitialItemApplied,
   onSave,
 }: {
   data: CompanyData;
   editable: boolean;
   saving: boolean;
+  initialItem: SigningSeed | null;
+  onInitialItemApplied: () => void;
   onSave: (soldier: Soldier, input: SigningSessionInput) => Promise<boolean>;
 }) {
   const [query, setQuery] = useState("");
@@ -1379,11 +1429,25 @@ function SigningsView({
   );
   const [numberedToAdd, setNumberedToAdd] = useState("");
   const [quantityToAdd, setQuantityToAdd] = useState("");
-  const [addQuantity, setAddQuantity] = useState(1);
+  const [addQuantity, setAddQuantity] = useState("1");
+  const [pendingInitialItem, setPendingInitialItem] =
+    useState<SigningSeed | null>(initialItem);
   const [pendingSigning, setPendingSigning] = useState<Omit<
     SigningSessionInput,
     "signature"
   > | null>(null);
+  const pendingInitialItemLabel = pendingInitialItem
+    ? pendingInitialItem.kind === "numbered"
+      ? `${itemLabel(
+          pendingInitialItem.item.type,
+          pendingInitialItem.item.variant,
+        )} · ${pendingInitialItem.item.number}`
+      : itemLabel(
+          pendingInitialItem.item.type,
+          pendingInitialItem.item.variant,
+          pendingInitialItem.item.variantLabel,
+        )
+    : "";
 
   const soldierMatches = useMemo(
     () =>
@@ -1412,33 +1476,69 @@ function SigningsView({
       setQuantityValues({});
       return;
     }
-    setSelectedNumbered(
-      new Set(
-        data.numberedItems
-          .filter(
-            (item) =>
-              item.active && item.assignedTo === selectedSoldier.personalNumber,
-          )
-          .map((item) => numberedItemKey(item.type, item.number)),
-      ),
+    const nextNumbered = new Set(
+      data.numberedItems
+        .filter(
+          (item) =>
+            item.active && item.assignedTo === selectedSoldier.personalNumber,
+        )
+        .map((item) => numberedItemKey(item.type, item.number)),
     );
-    setQuantityValues(
-      Object.fromEntries(
-        data.holdings
-          .filter(
-            (holding) =>
-              holding.personalNumber === selectedSoldier.personalNumber &&
-              holding.quantity > 0,
-          )
-          .map((holding) => [
-            catalogKey(holding.type, holding.variant),
-            holding.quantity,
-          ]),
-      ),
+    const nextQuantities = Object.fromEntries(
+      data.holdings
+        .filter(
+          (holding) =>
+            holding.personalNumber === selectedSoldier.personalNumber &&
+            holding.quantity > 0,
+        )
+        .map((holding) => [
+          catalogKey(holding.type, holding.variant),
+          holding.quantity,
+        ]),
     );
+    if (pendingInitialItem?.kind === "numbered") {
+      const seededItem = data.numberedItems.find(
+        (item) =>
+          numberedItemKey(item.type, item.number) ===
+          numberedItemKey(
+            pendingInitialItem.item.type,
+            pendingInitialItem.item.number,
+          ),
+      );
+      if (
+        seededItem?.active &&
+        seededItem.status === "זמין" &&
+        !seededItem.assignedTo
+      )
+        nextNumbered.add(numberedItemKey(seededItem.type, seededItem.number));
+    }
+    if (pendingInitialItem?.kind === "quantity") {
+      const seededItem = data.catalog.find(
+        (item) =>
+          catalogKey(item.type, item.variant) ===
+          catalogKey(
+            pendingInitialItem.item.type,
+            pendingInitialItem.item.variant,
+          ),
+      );
+      if (
+        seededItem?.active &&
+        seededItem.method === "כמותי" &&
+        availableQuantity(seededItem, data.holdings) > 0
+      ) {
+        const key = catalogKey(seededItem.type, seededItem.variant);
+        nextQuantities[key] = (nextQuantities[key] || 0) + 1;
+      }
+    }
+    setSelectedNumbered(nextNumbered);
+    setQuantityValues(nextQuantities);
+    if (pendingInitialItem) {
+      setPendingInitialItem(null);
+      onInitialItemApplied();
+    }
     setNumberedToAdd("");
     setQuantityToAdd("");
-    setAddQuantity(1);
+    setAddQuantity("1");
   }, [data, selectedSoldier]);
 
   if (!selectedSoldier) {
@@ -1451,6 +1551,13 @@ function SigningsView({
           </div>
         </div>
         <section className="panel soldier-picker">
+          {pendingInitialItem && (
+            <div className="selected-signing-item" role="status">
+              <strong>ציוד שנבחר להחתמה</strong>
+              <span>{pendingInitialItemLabel}</span>
+              <small>לאחר בחירת חייל, הפריט יתווסף אוטומטית להחתמה.</small>
+            </div>
+          )}
           <Field label="חיפוש חייל">
             <input
               autoFocus
@@ -1493,9 +1600,7 @@ function SigningsView({
       !item.assignedTo &&
       !selectedNumbered.has(numberedItemKey(item.type, item.number)),
   );
-  const quantityCatalog = data.catalog.filter(
-    (item) => item.active && item.method === "כמותי",
-  );
+  const quantityCatalog = activeCatalogItemsForMethod(data.catalog, "כמותי");
   const currentQuantity = (item: CatalogItem) =>
     data.holdings.find(
       (holding) =>
@@ -1523,6 +1628,9 @@ function SigningsView({
   const quantityAddItem = quantityCatalog.find(
     (item) => catalogKey(item.type, item.variant) === quantityToAdd,
   );
+  const addQuantityNumber = Number(addQuantity);
+  const hasValidAddQuantity =
+    Number.isInteger(addQuantityNumber) && addQuantityNumber > 0;
 
   return (
     <section>
@@ -1686,9 +1794,7 @@ function SigningsView({
                   min="1"
                   step="1"
                   value={addQuantity}
-                  onChange={(event) =>
-                    setAddQuantity(Math.max(1, Number(event.target.value) || 1))
-                  }
+                  onChange={(event) => setAddQuantity(event.target.value)}
                 />
               </Field>
               <button
@@ -1696,6 +1802,7 @@ function SigningsView({
                 className="secondary-button"
                 disabled={
                   !quantityAddItem ||
+                  !hasValidAddQuantity ||
                   availableQuantity(quantityAddItem, data.holdings) <= 0
                 }
                 onClick={() => {
@@ -1707,11 +1814,11 @@ function SigningsView({
                     ...current,
                     [quantityToAdd]: Math.min(
                       maximum,
-                      (current[quantityToAdd] || 0) + addQuantity,
+                      (current[quantityToAdd] || 0) + addQuantityNumber,
                     ),
                   }));
                   setQuantityToAdd("");
-                  setAddQuantity(1);
+                  setAddQuantity("1");
                 }}
               >
                 הוספה להחתמה
@@ -1783,7 +1890,7 @@ function InventoryView({
   onCatalog: (item: CatalogItem) => void;
   onCatalogEdit: (item: CatalogItem) => void;
   onNumberedEdit: (item: NumberedItem) => void;
-  onAction: (action: Action) => void;
+  onAction: (action: Exclude<Action, null>) => void;
   onCatalogToggle: (item: CatalogItem) => void;
   onNumberedToggle: (item: NumberedItem) => void;
 }) {
@@ -2631,7 +2738,9 @@ function CatalogFormModal({
   const [variant, setVariant] = useState(item?.variant || "");
   const [variantLabel, setVariantLabel] = useState(item?.variantLabel || "");
   const [method, setMethod] = useState(
-    item?.method || allowedMethods[0] || "צל״מ",
+    item?.method ||
+      (allowedMethods.includes("כמותי") ? "כמותי" : allowedMethods[0]) ||
+      "צל״מ",
   );
   const [stock, setStock] = useState(String(item?.totalStock || 0));
   const [note, setNote] = useState(item?.note || "");
@@ -2733,9 +2842,7 @@ function NumberedFormModal({
   onClose: () => void;
   onSave: (type: string, variant: string, number: string, note: string) => void;
 }) {
-  const options = data.catalog.filter(
-    (candidate) => candidate.active && candidate.method === "צל״מ",
-  );
+  const options = activeCatalogItemsForMethod(data.catalog, "צל״מ");
   const [key, setKey] = useState(
     item ? catalogKey(item.type, item.variant) : "",
   );
@@ -2753,7 +2860,7 @@ function NumberedFormModal({
           if (selected) onSave(selected.type, selected.variant, number, note);
         }}
       >
-        <Field label="סוג ופרט נוסף">
+        <Field label="סוג צל״מ ופרט נוסף">
           <select
             required
             disabled={Boolean(item)}
@@ -3632,7 +3739,7 @@ function CatalogDetail({
   editable: boolean;
   canManageStock: boolean;
   onClose: () => void;
-  onAction: (action: Action) => void;
+  onAction: (action: Exclude<Action, null>) => void;
 }) {
   const holdings = data.holdings.filter(
     (holding) =>
