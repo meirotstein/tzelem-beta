@@ -44,9 +44,16 @@ The app uses client-side `gapi.auth2`, Google Sheets API v4, and Drive API v3. O
 ```sh
 VITE_GOOGLE_API_KEY=...
 VITE_GOOGLE_CLIENT_ID=...
+VITE_APPS_SCRIPT_DEPLOYMENT_ID=...
 ```
 
 The OAuth client must allow the local and deployed web origins.
+
+Production writes require the standalone Apps Script mutation coordinator in
+[`apps-script`](apps-script). Without `VITE_APPS_SCRIPT_DEPLOYMENT_ID`, production
+writes are deliberately blocked rather than falling back to unsafe concurrent
+direct writes. Local development and automated tests retain the direct Sheets
+writer so the UI can be developed before a coordinator is configured.
 
 ## Spreadsheet setup
 
@@ -65,3 +72,17 @@ Saved signatures can be viewed from the soldier profile and from grouped signing
 Permissions are resolved from the signed-in Google email. The `הרשאות` tab supports admins, equipment scope (`צל״מ`, `כמותי`, or `הכל`), and an optional comma-separated platoon scope. Blank platoons mean all; an email without a row keeps full operational scope but is not an admin. The first admin must be added manually in the sheet. Only admins can open `הגדרות` and manage permissions, platoons, or locations. A non-admin with access to all platoons may create, edit, remove, reactivate, and manage stock for catalog types within their equipment scope. A user limited to named platoons may assign equipment, manage soldiers in those platoons, and create new numbered `צל״מ` items from existing types, but cannot change catalog definitions, stock, or existing item records. UI visibility and every repository write enforce the same rules.
 
 When a schema update only requires adding a missing required tab or required trailing columns, the app lists the exact additions and offers editors an explicit **השלמת מבנה הגיליון** action. Existing data is not moved or overwritten. Reordered, renamed, or conflicting headers remain incompatible and are never changed automatically.
+
+## Concurrent writes
+
+Normal reads remain client-side. Operational writes are sent to the Apps Script
+API executable, which briefly serializes mutations, reloads current rows, finds
+records by their domain keys, merges changes to unrelated fields, validates the
+projected inventory state, and submits the final state/history batch atomically.
+Unrelated signings are therefore saved normally. A write is rejected only when
+the same field or resource changed, a numbered item is no longer available, or
+aggregate quantity stock is no longer sufficient.
+
+The trailing `מזהה בקשה` column in `תנועות` provides idempotency for retries and
+double taps. It is a technical operation key and does not replace the domain keys
+`מספר אישי` and `סוג + מספר מזהה`.

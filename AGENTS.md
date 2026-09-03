@@ -195,6 +195,16 @@ Append a history entry for every operational change, including:
 
 Each entry records the timestamp, action, equipment key where relevant, previous and new soldier personal numbers where relevant, signed-in Google user email, and optional/required note. History is append-only through the app and should not be silently rewritten when current records are edited.
 
+## Concurrent writes
+
+- Production mutations must go through the standalone Apps Script coordinator in `apps-script`; reads remain direct from Sheets.
+- The coordinator acquires a short lock, reloads affected state, relocates rows by domain key, merges non-overlapping field changes, validates projected cross-table invariants, and writes current state plus history atomically.
+- Do not reject merely because unrelated spreadsheet data changed. Return a rebased-success result when the intended operation remains valid.
+- Reject genuine conflicts such as two users changing the same field, assigning the same numbered item, changing the same soldier/item holding, or exceeding aggregate quantity stock.
+- Every mutation carries a technical request key written to `תנועות`.`מזהה בקשה` so retries cannot apply the same operation twice. This key is not a domain identifier.
+- Keep signing drafts intact after conflict failures. Surface a specific Hebrew toast and let the user review or retry.
+- Settings and permissions use whole-editor stale detection rather than automatic merging.
+
 For operations that update current state and append history, minimize partial writes by using a single Sheets batch update where practical. Surface failures clearly and do not leave optimistic UI state presented as successfully saved.
 
 ## MVP screens and navigation

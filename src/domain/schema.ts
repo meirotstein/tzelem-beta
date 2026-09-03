@@ -6,7 +6,7 @@ import type {
   SpreadsheetMeta,
 } from "./types";
 
-export const SCHEMA_VERSION = "8";
+export const SCHEMA_VERSION = "9";
 
 export const SHEET_SCHEMAS = {
   soldiers: {
@@ -66,6 +66,7 @@ export const SHEET_SCHEMAS = {
       "מספר אישי חדש",
       "מבצע הפעולה",
       "הערה",
+      "מזהה בקשה",
     ],
   },
   signatures: {

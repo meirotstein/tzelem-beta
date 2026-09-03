@@ -84,6 +84,7 @@ export interface MovementEntry {
   newSoldier: string;
   actor: string;
   note: string;
+  requestKey?: string;
 }
 
 export type SignaturePoint = [x: number, y: number, elapsedMs: number];
@@ -178,6 +179,8 @@ export interface CompanyData {
   signatures: SignatureSummary[];
   permissions: PermissionRecord[];
   settings: ManagedSettings;
+  /** Raw normalized rows used only for optimistic concurrency checks. */
+  sourceRows?: Record<string, Array<Array<string | number | boolean>>>;
 }
 
 export interface AdditiveSchemaUpgrade {

@@ -185,7 +185,7 @@ describe("applyAdditiveSchemaUpgrade", () => {
         (value: { userEnteredValue: { stringValue?: string } }) =>
           value.userEnteredValue.stringValue,
       ),
-    ).toEqual(["schema_version", "8"]);
+    ).toEqual(["schema_version", "9"]);
   });
 });
 

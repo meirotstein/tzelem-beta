@@ -70,6 +70,7 @@ import {
   validateSoldierInput,
   validateStatusChange,
 } from "../domain/rules";
+import { APPS_SCRIPT_DEPLOYMENT_ID } from "./config";
 
 type CellPrimitive = string | number | boolean;
 type SheetRows = Record<string, unknown[][]>;
@@ -102,11 +103,45 @@ const appendRow = (sheetId: number, values: CellPrimitive[]) => ({
   appendCells: { sheetId, rows: [rowData(values)], fields: "userEnteredValue" },
 });
 const asRows = (response: any): unknown[][] => resultOf(response)?.values || [];
+const asCellPrimitive = (value: unknown): CellPrimitive =>
+  typeof value === "boolean" || typeof value === "number"
+    ? value
+    : String(value ?? "");
+
+const CONCURRENCY_SHEETS = [
+  "soldiers",
+  "catalog",
+  "numberedItems",
+  "holdings",
+  "equipmentGroups",
+  "equipmentGroupItems",
+  "permissions",
+  "settings",
+] as const;
+
+interface CoordinatorResult {
+  ok: boolean;
+  code?: string;
+  message?: string;
+  rebased?: boolean;
+  duplicate?: boolean;
+}
 
 export class SpreadsheetRepository {
+  private latestData: CompanyData | null = null;
+  private concurrencyNotice = "";
+  private pendingRequestKeys = new Map<string, string>();
+
   constructor(private readonly spreadsheetId: string) {}
 
+  takeConcurrencyNotice(): string {
+    const notice = this.concurrencyNotice;
+    this.concurrencyNotice = "";
+    return notice;
+  }
+
   async inspect(): Promise<LoadResult> {
+    this.latestData = null;
     const [spreadsheet, user, editable] = await Promise.all([
       this.getSpreadsheet(),
       this.getUserProfile(),
@@ -157,7 +192,9 @@ export class SpreadsheetRepository {
       return { kind: "incompatible", meta, issues };
     }
     try {
-      return { kind: "ready", data: this.parseData(meta, rows) };
+      const data = this.parseData(meta, rows);
+      this.latestData = data;
+      return { kind: "ready", data };
     } catch (error) {
       return {
         kind: "incompatible",
@@ -1521,6 +1558,7 @@ export class SpreadsheetRepository {
           newSoldier: normalizeText(row[8]),
           actor: normalizeText(row[9]),
           note: normalizeText(row[10]),
+          requestKey: normalizeText(row[11]),
         };
       })
       .filter((entry) => entry.timestamp || entry.action);
@@ -1723,6 +1761,12 @@ export class SpreadsheetRepository {
       signatures,
       permissions,
       settings,
+      sourceRows: Object.fromEntries(
+        Object.entries(rows).map(([title, sheetRows]) => [
+          title,
+          sheetRows.map((row) => row.map(asCellPrimitive)),
+        ]),
+      ),
     };
   }
 
@@ -2102,9 +2146,103 @@ export class SpreadsheetRepository {
 
   private async batch(requests: any[]): Promise<void> {
     if (!requests.length) return;
+    const data = this.latestData;
+    if (data && APPS_SCRIPT_DEPLOYMENT_ID) {
+      const fingerprint = this.mutationFingerprint(requests, data);
+      const requestKey =
+        this.pendingRequestKeys.get(fingerprint) ||
+        globalThis.crypto?.randomUUID?.() ||
+        `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      this.pendingRequestKeys.set(fingerprint, requestKey);
+      const enriched = this.addRequestKey(requests, data, requestKey);
+      const baseRows = Object.fromEntries(
+        CONCURRENCY_SHEETS.map((key) => {
+          const title = SHEET_SCHEMAS[key].title;
+          return [title, data.sourceRows?.[title] || []];
+        }),
+      );
+      const response = await (gapi.client as any).script.scripts.run({
+        scriptId: APPS_SCRIPT_DEPLOYMENT_ID,
+        resource: {
+          function: "applyMutation",
+          parameters: [
+            {
+              spreadsheetId: this.spreadsheetId,
+              requestKey,
+              expectedActor: data.meta.userEmail,
+              baseRows,
+              requests: enriched,
+            },
+          ],
+        },
+      });
+      const apiResult = resultOf(response);
+      const executionError = apiResult?.error?.details?.[0]?.errorMessage;
+      if (executionError) throw new Error("שירות השמירה המתואמת נכשל.");
+      const result = apiResult?.response?.result as CoordinatorResult | undefined;
+      if (!result?.ok) {
+        this.pendingRequestKeys.delete(fingerprint);
+        throw new Error(result?.message || "השמירה המתואמת נכשלה.");
+      }
+      this.pendingRequestKeys.delete(fingerprint);
+      if (result.rebased)
+        this.concurrencyNotice =
+          "הנתונים השתנו במקביל. הפעולה הותאמה למצב העדכני ונשמרה.";
+      return;
+    }
+    if (!data) {
+      await gapi.client.sheets.spreadsheets.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        resource: { requests },
+      });
+      return;
+    }
+    if (import.meta.env.PROD)
+      throw new Error(
+        "שירות השמירה המתואמת אינו מוגדר. יש להגדיר VITE_APPS_SCRIPT_DEPLOYMENT_ID.",
+      );
     await gapi.client.sheets.spreadsheets.batchUpdate({
       spreadsheetId: this.spreadsheetId,
       resource: { requests },
     });
+  }
+
+  private addRequestKey(
+    requests: any[],
+    data: CompanyData,
+    requestKey: string,
+  ): any[] {
+    const movementSheetId = this.sheetId(data, "movements");
+    return requests.map((request) => {
+      if (request?.appendCells?.sheetId !== movementSheetId) return request;
+      return {
+        ...request,
+        appendCells: {
+          ...request.appendCells,
+          rows: (request.appendCells.rows || []).map((row: any) => ({
+            ...row,
+            values: [...(row.values || []), cell(requestKey)],
+          })),
+        },
+      };
+    });
+  }
+
+  private mutationFingerprint(requests: any[], data: CompanyData): string {
+    const movementSheetId = this.sheetId(data, "movements");
+    const signatureSheetId = this.sheetId(data, "signatures");
+    const normalized = JSON.parse(JSON.stringify(requests));
+    normalized.forEach((request: any) => {
+      const append = request?.appendCells;
+      if (
+        append?.sheetId !== movementSheetId &&
+        append?.sheetId !== signatureSheetId
+      )
+        return;
+      (append.rows || []).forEach((row: any) => {
+        if (row.values?.[0]) row.values[0] = cell("");
+      });
+    });
+    return JSON.stringify(normalized);
   }
 }

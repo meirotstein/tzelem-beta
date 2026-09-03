@@ -8,12 +8,17 @@ export const GOOGLE_CLIENT_ID =
 export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/drive.metadata.readonly',
+  'https://www.googleapis.com/auth/userinfo.email',
 ].join(' ');
 
 export const DISCOVERY_DOCS = [
   'https://sheets.googleapis.com/$discovery/rest?version=v4',
   'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest',
+  'https://script.googleapis.com/$discovery/rest?version=v1',
 ];
+
+export const APPS_SCRIPT_DEPLOYMENT_ID =
+  import.meta.env.VITE_APPS_SCRIPT_DEPLOYMENT_ID || '';
 
 export const SPREADSHEET_STORAGE_KEY = 'tzelem-spreadsheet-id';
 export const GOOGLE_SIGNED_IN_STORAGE_KEY = 'tzelem-google-signed-in';

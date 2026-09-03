@@ -520,7 +520,7 @@ export function App() {
         throw new Error("השמירה בוצעה, אך קריאת הנתונים המעודכנים נכשלה.");
       }
       setResult(refreshed);
-      setNotice(success);
+      setNotice(repo.takeConcurrencyNotice() || success);
       return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "השמירה נכשלה");
