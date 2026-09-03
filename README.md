@@ -86,3 +86,11 @@ aggregate quantity stock is no longer sufficient.
 The trailing `מזהה בקשה` column in `תנועות` provides idempotency for retries and
 double taps. It is a technical operation key and does not replace the domain keys
 `מספר אישי` and `סוג + מספר מזהה`.
+
+Admins can activate an explicit emergency writer from `הגדרות`. The central
+`write_mode` setting defaults to `coordinated` when its row is missing or blank;
+only the exact value `direct` enables direct Sheets writes. Direct mode never
+activates automatically after an Apps Script failure. Its toggle is deliberately
+written directly to Sheets so it remains available during a coordinator outage,
+is audited in `תנועות`, and displays a persistent warning to every user until an
+admin explicitly restores protected writes.

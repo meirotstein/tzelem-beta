@@ -17,6 +17,7 @@ import {
 import {
   additiveSchemaUpgrade,
   isWorkbookEmpty,
+  parseWriteMode,
   SHEET_SCHEMAS,
   validateHeaders,
 } from "./schema";
@@ -60,6 +61,21 @@ const quantity: CatalogItem = {
 };
 
 describe("spreadsheet compatibility", () => {
+  it("defaults a missing write mode to coordinated", () => {
+    expect(parseWriteMode("")).toEqual({
+      mode: "coordinated",
+      invalid: false,
+    });
+    expect(parseWriteMode("direct")).toEqual({
+      mode: "direct",
+      invalid: false,
+    });
+    expect(parseWriteMode("unexpected")).toEqual({
+      mode: "coordinated",
+      invalid: true,
+    });
+  });
+
   it("distinguishes a truly empty workbook", () => {
     expect(
       isWorkbookEmpty(

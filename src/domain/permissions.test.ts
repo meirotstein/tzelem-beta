@@ -100,7 +100,13 @@ describe("permissions", () => {
       movements: [],
       signatures: [],
       permissions: [],
-      settings: { platoons: ["1", "2"], locations: ["מחסן"], schemaVersion: "8" },
+      settings: {
+        platoons: ["1", "2"],
+        locations: ["מחסן"],
+        schemaVersion: "8",
+        writeMode: "coordinated",
+        writeModeIssue: false,
+      },
     } satisfies CompanyData;
 
     const scoped = scopeCompanyData(data, access);

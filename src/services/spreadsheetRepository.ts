@@ -36,6 +36,7 @@ import {
   normalizeText,
   numberedItemKey,
   parseActive,
+  parseWriteMode,
   parseYes,
   SCHEMA_VERSION,
   SHEET_SCHEMAS,
@@ -1355,14 +1356,15 @@ export class SpreadsheetRepository {
         data.settings.locations.length,
         unique.length,
         locations.length,
-      ) + 2;
+      ) + 3;
     const rows: CellPrimitive[][] = [[...SHEET_SCHEMAS.settings.headers]];
-    for (let index = 0; index < rowCount - 2; index += 1)
+    for (let index = 0; index < rowCount - 3; index += 1)
       rows.push([
         unique[index] || "",
         locations[index] ? "location" : "",
         locations[index] || "",
       ]);
+    rows.push(["", "write_mode", settings.writeMode]);
     rows.push(["", "schema_version", SCHEMA_VERSION]);
     await this.batch([
       {
@@ -1383,6 +1385,51 @@ export class SpreadsheetRepository {
         note: `מחלקות: ${unique.join(", ")} · מיקומים: ${locations.join(", ")}`,
       }),
     ]);
+  }
+
+  async setWriteMode(
+    data: CompanyData,
+    mode: "coordinated" | "direct",
+  ): Promise<void> {
+    this.ensureEditable(data);
+    this.ensureAdmin(data);
+    const title = SHEET_SCHEMAS.settings.title;
+    const rows = data.sourceRows?.[title] || [];
+    const existingIndex = rows.findIndex(
+      (row) => normalizeText(row[1]) === "write_mode",
+    );
+    const settingRequest =
+      existingIndex >= 0
+        ? {
+            updateCells: {
+              range: {
+                sheetId: this.sheetId(data, "settings"),
+                startRowIndex: existingIndex,
+                endRowIndex: existingIndex + 1,
+                startColumnIndex: 1,
+                endColumnIndex: 3,
+              },
+              rows: [rowData(["write_mode", mode])],
+              fields: "userEnteredValue",
+            },
+          }
+        : appendRow(this.sheetId(data, "settings"), ["", "write_mode", mode]);
+    const requestKey = this.newRequestKey();
+    const requests = this.addRequestKey(
+      [
+        settingRequest,
+        this.movementRequest(data, {
+          action: "שינוי מצב שמירה",
+          note:
+            mode === "direct"
+              ? "הפעלת שמירה ישירה במצב חירום"
+              : "חזרה לשמירה מוגנת",
+        }),
+      ],
+      data,
+      requestKey,
+    );
+    await this.directBatch(requests);
   }
 
   async savePermissions(
@@ -1605,6 +1652,10 @@ export class SpreadsheetRepository {
       })
       .filter((permission) => permission.email);
     const settingRows = (rows[SHEET_SCHEMAS.settings.title] || []).slice(1);
+    const rawWriteMode = normalizeText(
+      settingRows.find((row) => normalizeText(row[1]) === "write_mode")?.[2],
+    );
+    const parsedWriteMode = parseWriteMode(rawWriteMode);
     const settings: ManagedSettings = {
       platoons: [
         ...new Set(
@@ -1624,6 +1675,8 @@ export class SpreadsheetRepository {
           (row) => normalizeText(row[1]) === "schema_version",
         )?.[2],
       ),
+      writeMode: parsedWriteMode.mode,
+      writeModeIssue: parsedWriteMode.invalid,
     };
 
     const soldierKeys = new Set<string>();
@@ -1995,7 +2048,10 @@ export class SpreadsheetRepository {
     await this.valuesBatchUpdate([
       {
         range: `${quoteSheet(SHEET_SCHEMAS.settings.title)}!A2`,
-        values: [["", "schema_version", SCHEMA_VERSION]],
+        values: [
+          ["", "write_mode", "coordinated"],
+          ["", "schema_version", SCHEMA_VERSION],
+        ],
       },
     ]);
     const spreadsheet = await this.getSpreadsheet();
@@ -2147,12 +2203,16 @@ export class SpreadsheetRepository {
   private async batch(requests: any[]): Promise<void> {
     if (!requests.length) return;
     const data = this.latestData;
+    if (data?.settings.writeMode === "direct") {
+      const requestKey = this.newRequestKey();
+      await this.directBatch(this.addRequestKey(requests, data, requestKey));
+      return;
+    }
     if (data && APPS_SCRIPT_DEPLOYMENT_ID) {
       const fingerprint = this.mutationFingerprint(requests, data);
       const requestKey =
         this.pendingRequestKeys.get(fingerprint) ||
-        globalThis.crypto?.randomUUID?.() ||
-        `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        this.newRequestKey();
       this.pendingRequestKeys.set(fingerprint, requestKey);
       const enriched = this.addRequestKey(requests, data, requestKey);
       const baseRows = Object.fromEntries(
@@ -2205,6 +2265,20 @@ export class SpreadsheetRepository {
       spreadsheetId: this.spreadsheetId,
       resource: { requests },
     });
+  }
+
+  private async directBatch(requests: any[]): Promise<void> {
+    await gapi.client.sheets.spreadsheets.batchUpdate({
+      spreadsheetId: this.spreadsheetId,
+      resource: { requests },
+    });
+  }
+
+  private newRequestKey(): string {
+    return (
+      globalThis.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
   }
 
   private addRequestKey(

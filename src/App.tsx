@@ -757,6 +757,17 @@ export function App() {
           הגיליון פתוח לקריאה בלבד. פעולות עריכה אינן זמינות.
         </div>
       )}
+      {data.settings.writeMode === "direct" && (
+        <div className="emergency-write-banner" role="alert">
+          מצב חירום פעיל: השמירות מתבצעות ישירות לגיליון ללא הגנה מלאה מפני
+          פעולות מקבילות.
+        </div>
+      )}
+      {data.settings.writeModeIssue && access.admin && (
+        <div className="read-only-banner" role="alert">
+          ערך מצב השמירה בגיליון אינו מוכר. המערכת משתמשת בשמירה מוגנת.
+        </div>
+      )}
       {toast}
       <main className="content">
         {view === "dashboard" && (
@@ -941,6 +952,15 @@ export function App() {
                 (current, repository) =>
                   repository.savePermissions(current, permissions),
                 "ההרשאות נשמרו",
+              )
+            }
+            onWriteModeChange={(mode) =>
+              void mutate(
+                (current, repository) =>
+                  repository.setWriteMode(current, mode),
+                mode === "direct"
+                  ? "מצב השמירה הישירה הופעל"
+                  : "השמירה המוגנת הופעלה",
               )
             }
             onRequestConfirmation={setConfirmation}
@@ -2942,12 +2962,14 @@ function SettingsView({
   editable,
   onSave,
   onSavePermissions,
+  onWriteModeChange,
   onRequestConfirmation,
 }: {
   data: CompanyData;
   editable: boolean;
   onSave: (settings: CompanyData["settings"]) => void;
   onSavePermissions: (permissions: PermissionInput[]) => void;
+  onWriteModeChange: (mode: "coordinated" | "direct") => void;
   onRequestConfirmation: (request: ConfirmationRequest) => void;
 }) {
   const [text, setText] = useState(data.settings.platoons.join("\n"));
@@ -2972,6 +2994,52 @@ function SettingsView({
           <p>ניהול מחלקות, מיקומים והרשאות</p>
         </div>
       </div>
+      <section className="panel write-mode-panel">
+        <div>
+          <h2>מצב שמירה</h2>
+          <p>
+            {data.settings.writeMode === "direct"
+              ? "שמירה ישירה פעילה ללא הגנה מלאה מפני פעולות מקבילות."
+              : "שמירה מוגנת פעילה באמצעות מתאם השמירות."}
+          </p>
+        </div>
+        {editable && (
+          <button
+            type="button"
+            className={
+              data.settings.writeMode === "direct"
+                ? "primary-button"
+                : "small-button danger-text"
+            }
+            onClick={() => {
+              const nextMode =
+                data.settings.writeMode === "direct"
+                  ? "coordinated"
+                  : "direct";
+              onRequestConfirmation({
+                title:
+                  nextMode === "direct"
+                    ? "מעבר לשמירה ישירה"
+                    : "חזרה לשמירה מוגנת",
+                message:
+                  nextMode === "direct"
+                    ? "שמירה ישירה עוקפת את ההגנה מפני פעולות מקבילות. משתמשים עלולים לדרוס שינויים שנשמרו באותו זמן. יש להשתמש במצב זה רק כאשר שירות השמירה המוגנת אינו זמין."
+                    : "להחזיר את המערכת לשמירה מוגנת באמצעות מתאם השמירות?",
+                confirmLabel:
+                  nextMode === "direct"
+                    ? "הפעלת מצב חירום"
+                    : "חזרה לשמירה מוגנת",
+                danger: nextMode === "direct",
+                onConfirm: () => onWriteModeChange(nextMode),
+              });
+            }}
+          >
+            {data.settings.writeMode === "direct"
+              ? "חזרה לשמירה מוגנת"
+              : "מעבר לשמירה ישירה"}
+          </button>
+        )}
+      </section>
       <section className="panel">
         <h2>מחלקות</h2>
         <Field label="מחלקה בכל שורה">

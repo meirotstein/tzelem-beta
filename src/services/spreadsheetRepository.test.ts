@@ -63,7 +63,13 @@ const data: CompanyData = {
   movements: [],
   signatures: [],
   permissions: [],
-  settings: { platoons: ["1"], locations: [], schemaVersion: "8" },
+  settings: {
+    platoons: ["1"],
+    locations: [],
+    schemaVersion: "8",
+    writeMode: "coordinated",
+    writeModeIssue: false,
+  },
 };
 
 describe("saveSigningSession", () => {
@@ -330,7 +336,13 @@ describe("repository permission enforcement", () => {
           platoons: ["1"],
         },
       ],
-      settings: { platoons: ["1", "2"], locations: [], schemaVersion: "8" },
+      settings: {
+        platoons: ["1", "2"],
+        locations: [],
+        schemaVersion: "8",
+        writeMode: "coordinated",
+        writeModeIssue: false,
+      },
     };
 
     await expect(
@@ -663,6 +675,8 @@ describe("repository permission enforcement", () => {
       platoons: ["1"],
       locations: ["מחסן", "משרד"],
       schemaVersion: "8",
+      writeMode: "coordinated",
+      writeModeIssue: false,
     });
     const rows = batchUpdate.mock.calls[0][0].resource.requests[0].updateCells.rows;
     const values = rows.map((row: { values: Array<{ userEnteredValue: { stringValue?: string } }> }) =>
@@ -690,6 +704,8 @@ describe("repository permission enforcement", () => {
         platoons: ["1"],
         locations: ["מחסן"],
         schemaVersion: "8",
+        writeMode: "coordinated",
+        writeModeIssue: false,
       },
     };
     await expect(
@@ -697,7 +713,42 @@ describe("repository permission enforcement", () => {
         platoons: ["1"],
         locations: [],
         schemaVersion: "8",
+        writeMode: "coordinated",
+        writeModeIssue: false,
       }),
     ).rejects.toThrow("לא ניתן להסיר את המיקום מחסן");
+  });
+
+  it("lets an admin change the emergency write mode directly", async () => {
+    const repository = new SpreadsheetRepository("sheet");
+    const adminData: CompanyData = {
+      ...data,
+      permissions: [
+        {
+          row: 2,
+          email: "admin@example.com",
+          admin: true,
+          equipmentScope: "הכל",
+          platoons: [],
+        },
+      ],
+      sourceRows: {
+        [SHEET_SCHEMAS.settings.title]: [
+          [...SHEET_SCHEMAS.settings.headers],
+          ["", "schema_version", "9"],
+        ],
+      },
+    };
+
+    await repository.setWriteMode(adminData, "direct");
+
+    const call = batchUpdate.mock.calls.at(-1);
+    expect(call).toBeDefined();
+    const requests = call![0].resource.requests;
+    expect(requests[0].appendCells.rows[0].values.map(
+      (value: { userEnteredValue: { stringValue?: string } }) =>
+        value.userEnteredValue.stringValue,
+    )).toEqual(["", "write_mode", "direct"]);
+    expect(requests[1].appendCells.rows[0].values).toHaveLength(12);
   });
 });

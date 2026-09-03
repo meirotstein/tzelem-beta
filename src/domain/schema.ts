@@ -135,6 +135,16 @@ export const isEquipmentScope = (value: string): value is EquipmentScope =>
 export const parseYes = (value: unknown): boolean =>
   ["true", "1", "כן"].includes(normalizeText(value).toLowerCase());
 
+export const parseWriteMode = (
+  value: unknown,
+): { mode: "coordinated" | "direct"; invalid: boolean } => {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized || normalized === "coordinated")
+    return { mode: "coordinated", invalid: false };
+  if (normalized === "direct") return { mode: "direct", invalid: false };
+  return { mode: "coordinated", invalid: true };
+};
+
 export const headersMatch = (
   actual: unknown[],
   expected: readonly string[],

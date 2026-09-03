@@ -350,6 +350,31 @@ button:disabled {
   color: #715610;
   font-size: 14px;
 }
+.emergency-write-banner {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #d4695f;
+  border-radius: 10px;
+  background: #fff0ee;
+  color: #8f241c;
+  font-size: 14px;
+  font-weight: 700;
+}
+.write-mode-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.write-mode-panel h2,
+.write-mode-panel p {
+  margin: 0;
+}
+.write-mode-panel p {
+  margin-top: 5px;
+  color: #667d83;
+}
 
 .state-panel {
   display: grid;

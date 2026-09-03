@@ -86,6 +86,8 @@ const data = {
     platoons: ["א", "ב"],
     locations: ["מחסן פלוגתי"],
     schemaVersion: "8",
+    writeMode: "coordinated",
+    writeModeIssue: false,
   },
   meta: {
     spreadsheetId: "x",

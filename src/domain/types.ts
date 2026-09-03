@@ -128,6 +128,8 @@ export interface ManagedSettings {
   platoons: string[];
   locations: string[];
   schemaVersion: string;
+  writeMode: "coordinated" | "direct";
+  writeModeIssue: boolean;
 }
 
 export interface PermissionRecord {

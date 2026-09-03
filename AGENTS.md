@@ -204,6 +204,9 @@ Each entry records the timestamp, action, equipment key where relevant, previous
 - Every mutation carries a technical request key written to `תנועות`.`מזהה בקשה` so retries cannot apply the same operation twice. This key is not a domain identifier.
 - Keep signing drafts intact after conflict failures. Surface a specific Hebrew toast and let the user review or retry.
 - Settings and permissions use whole-editor stale detection rather than automatic merging.
+- `הגדרות`.`write_mode` is the central emergency kill switch. Missing, blank, or unknown values resolve to `coordinated`; only `direct` bypasses Apps Script.
+- Never fall back to direct writes automatically. Only an admin may change the mode through the confirmed UI action, and the mode change itself is a deliberately direct, audited Sheets batch so it works during a coordinator outage.
+- Show every user a persistent danger banner while direct mode is active, and require an explicit admin action to restore coordinated writes.
 
 For operations that update current state and append history, minimize partial writes by using a single Sheets batch update where practical. Surface failures clearly and do not leave optimistic UI state presented as successfully saved.
 
