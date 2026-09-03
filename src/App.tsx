@@ -1715,6 +1715,7 @@ function SigningsView({
   const [quantityToAdd, setQuantityToAdd] = useState("");
   const [addQuantity, setAddQuantity] = useState("1");
   const [groupToAdd, setGroupToAdd] = useState("");
+  const [showOnlyChanged, setShowOnlyChanged] = useState(false);
   const [pendingInitialItem, setPendingInitialItem] =
     useState<SigningSeed | null>(initialItem);
   const [pendingSigning, setPendingSigning] = useState<Omit<
@@ -1824,6 +1825,7 @@ function SigningsView({
     setNumberedToAdd("");
     setQuantityToAdd("");
     setAddQuantity("1");
+    setShowOnlyChanged(false);
   }, [selectedSoldier?.personalNumber]);
 
   useEffect(() => {
@@ -1974,6 +1976,17 @@ function SigningsView({
   const numberedToReturn = currentNumbered.filter(
     (item) => !selectedNumbered.has(numberedItemKey(item.type, item.number)),
   );
+  const numberedHasDraftChange = (item: NumberedItem) => {
+    const key = numberedItemKey(item.type, item.number);
+    return (
+      !selectedNumbered.has(key) ||
+      item.assignedTo !== selectedSoldier.personalNumber
+    );
+  };
+  const displayedNumberedItems = [
+    ...selectedNumberedItems,
+    ...numberedToReturn,
+  ].filter((item) => !showOnlyChanged || numberedHasDraftChange(item));
   const quantityTargets = quantityCatalog
     .map((item) => ({
       item,
@@ -1997,8 +2010,19 @@ function SigningsView({
   const changeCount =
     numberedToAssign.length + numberedToReturn.length + quantityTargets.length;
   const displayedQuantityItems = quantityCatalog.filter(
-    (item) =>
-      Object.hasOwn(quantityValues, catalogKey(item.type, item.variant)),
+    (item) => {
+      const key = catalogKey(item.type, item.variant);
+      const hasDraftValue = Object.hasOwn(quantityValues, key);
+      const rawQuantity = quantityValues[key] ?? "";
+      const changed =
+        (!hasDraftValue && currentQuantity(item) > 0) ||
+        (hasDraftValue &&
+          (rawQuantity === "" || Number(rawQuantity) !== currentQuantity(item)));
+      return (
+        (hasDraftValue || currentQuantity(item) > 0) &&
+        (!showOnlyChanged || changed)
+      );
+    },
   );
   const quantityAddItem = quantityCatalog.find(
     (item) => catalogKey(item.type, item.variant) === quantityToAdd,
@@ -2036,98 +2060,214 @@ function SigningsView({
       </div>
 
       <section className="panel">
-        <h2>ציוד חתום</h2>
+        <div className="signing-list-heading">
+          <h2>ציוד חתום</h2>
+          <label className="changed-items-toggle">
+            <input
+              type="checkbox"
+              checked={showOnlyChanged}
+              onChange={(event) => setShowOnlyChanged(event.target.checked)}
+            />
+            <span>שינויים בלבד</span>
+          </label>
+        </div>
+        {changeCount > 0 && (
+          <p className="draft-change-legend">
+            פריטים מסומנים כוללים שינויים שטרם נשמרו.
+          </p>
+        )}
         <div className="cards-list compact">
-          {selectedNumberedItems.map((item) => (
-            <article
-              className="list-card"
-              key={numberedItemKey(item.type, item.number)}
-            >
-              <div>
-                <strong>
-                  {itemLabel(item.type, item.variant)} · {item.number}
-                </strong>
-                <p>צל״מ</p>
-              </div>
-              {editable && (
-                <button
-                  type="button"
-                  className="small-button danger-text"
-                  onClick={() => {
-                    onRequestConfirmation({
-                      title: "הסרת פריט מההחתמה",
-                      message: `להסיר את ${itemLabel(item.type, item.variant)} מספר ${item.number} מטיוטת ההחתמה?`,
-                      confirmLabel: "הסרה מההחתמה",
-                      danger: true,
-                      onConfirm: () => {
-                        const next = new Set(selectedNumbered);
-                        next.delete(numberedItemKey(item.type, item.number));
-                        setSelectedNumbered(next);
-                      },
-                    });
-                  }}
-                >
-                  הסרה
-                </button>
-              )}
-            </article>
-          ))}
+          {displayedNumberedItems.map((item) => {
+            const key = numberedItemKey(item.type, item.number);
+            const pendingRemoval = !selectedNumbered.has(key);
+            const pendingAddition =
+              !pendingRemoval &&
+              item.assignedTo !== selectedSoldier.personalNumber;
+            return (
+              <article
+                className={`list-card${
+                  pendingRemoval
+                    ? " draft-change draft-removal"
+                    : pendingAddition
+                      ? " draft-change draft-addition"
+                      : ""
+                }`}
+                key={key}
+              >
+                <div>
+                  <strong>
+                    {itemLabel(item.type, item.variant)} · {item.number}
+                  </strong>
+                  <p>צל״מ</p>
+                  {pendingRemoval && (
+                    <span className="draft-change-badge removal">
+                      ממתין להסרה
+                    </span>
+                  )}
+                  {pendingAddition && (
+                    <span className="draft-change-badge">טרם נשמר</span>
+                  )}
+                </div>
+                {editable &&
+                  (pendingRemoval ? (
+                    <button
+                      type="button"
+                      className="small-button"
+                      onClick={() =>
+                        setSelectedNumbered(
+                          (current) => new Set([...current, key]),
+                        )
+                      }
+                    >
+                      ביטול הסרה
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="small-button danger-text"
+                      onClick={() => {
+                        onRequestConfirmation({
+                          title: "הסרת פריט מההחתמה",
+                          message: `להסיר את ${itemLabel(item.type, item.variant)} מספר ${item.number} מטיוטת ההחתמה?`,
+                          confirmLabel: "הסרה מההחתמה",
+                          danger: true,
+                          onConfirm: () => {
+                            const next = new Set(selectedNumbered);
+                            next.delete(key);
+                            setSelectedNumbered(next);
+                          },
+                        });
+                      }}
+                    >
+                      הסרה
+                    </button>
+                  ))}
+              </article>
+            );
+          })}
           {displayedQuantityItems.map((item) => {
             const key = catalogKey(item.type, item.variant);
+            const originalQuantity = currentQuantity(item);
+            const hasDraftValue = Object.hasOwn(quantityValues, key);
+            const rawQuantity = quantityValues[key] ?? "";
+            const parsedQuantity = Number(rawQuantity);
+            const invalidQuantity =
+              hasDraftValue &&
+              (rawQuantity === "" ||
+                !Number.isInteger(parsedQuantity) ||
+                parsedQuantity < 0);
+            const pendingRemoval =
+              originalQuantity > 0 &&
+              (!hasDraftValue || (!invalidQuantity && parsedQuantity === 0));
+            const changed =
+              !hasDraftValue ||
+              rawQuantity === "" ||
+              parsedQuantity !== originalQuantity;
             return (
-              <article className="list-card" key={key}>
+              <article
+                className={`list-card${
+                  changed
+                    ? ` draft-change ${
+                        pendingRemoval ? "draft-removal" : "draft-addition"
+                      }`
+                    : ""
+                }`}
+                key={key}
+              >
                 <div>
                   <strong>
                     {itemLabel(item.type, item.variant, item.variantLabel)}
                   </strong>
                   <p>כמותי</p>
+                  {changed && (
+                    <div className="quantity-change-summary">
+                      <span
+                        className={`draft-change-badge${
+                          pendingRemoval ? " removal" : ""
+                        }`}
+                      >
+                        {pendingRemoval
+                          ? "ממתין להסרה"
+                          : invalidQuantity
+                            ? "שינוי לא תקין"
+                            : "טרם נשמר"}
+                      </span>
+                      <small>כמות לפני השינוי: {originalQuantity}</small>
+                    </div>
+                  )}
                 </div>
                 {editable && (
                   <div className="quantity-editor">
-                    <input
-                      aria-label={`כמות ${itemLabel(item.type, item.variant, item.variantLabel)}`}
-                      type="number"
-                      min="0"
-                      max={
-                        currentQuantity(item) +
-                        availableQuantity(item, data.holdings)
-                      }
-                      step="1"
-                      value={quantityValues[key] ?? ""}
-                      onChange={(event) =>
-                        setQuantityValues((current) => ({
-                          ...current,
-                          [key]: event.target.value,
-                        }))
-                      }
-                    />
-                    <button
-                      type="button"
-                      className="small-button danger-text"
-                      onClick={() =>
-                        onRequestConfirmation({
-                          title: "הסרת ציוד מההחתמה",
-                          message: `להסיר את ${itemLabel(item.type, item.variant, item.variantLabel)} מטיוטת ההחתמה?`,
-                          confirmLabel: "הסרה מההחתמה",
-                          danger: true,
-                          onConfirm: () =>
-                            setQuantityValues((current) => {
-                              const next = { ...current };
-                              delete next[key];
-                              return next;
-                            }),
-                        })
-                      }
-                    >
-                      הסרה
-                    </button>
+                    {pendingRemoval ? (
+                      <>
+                        <span className="pending-removal-quantity">
+                          כמות נוכחית: {originalQuantity}
+                        </span>
+                        <button
+                          type="button"
+                          className="small-button"
+                          onClick={() =>
+                            setQuantityValues((current) => ({
+                              ...current,
+                              [key]: String(originalQuantity),
+                            }))
+                          }
+                        >
+                          ביטול הסרה
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          aria-label={`כמות ${itemLabel(item.type, item.variant, item.variantLabel)}`}
+                          type="number"
+                          min="0"
+                          max={
+                            originalQuantity +
+                            availableQuantity(item, data.holdings)
+                          }
+                          step="1"
+                          value={rawQuantity}
+                          onChange={(event) =>
+                            setQuantityValues((current) => ({
+                              ...current,
+                              [key]: event.target.value,
+                            }))
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="small-button danger-text"
+                          onClick={() =>
+                            onRequestConfirmation({
+                              title: "הסרת ציוד מההחתמה",
+                              message: `להסיר את ${itemLabel(item.type, item.variant, item.variantLabel)} מטיוטת ההחתמה?`,
+                              confirmLabel: "הסרה מההחתמה",
+                              danger: true,
+                              onConfirm: () =>
+                                setQuantityValues((current) => {
+                                  const next = { ...current };
+                                  delete next[key];
+                                  return next;
+                                }),
+                            })
+                          }
+                        >
+                          הסרה
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </article>
             );
           })}
-          {!selectedNumberedItems.length && !displayedQuantityItems.length && (
-            <EmptyList>אין ציוד חתום לחייל.</EmptyList>
+          {!displayedNumberedItems.length && !displayedQuantityItems.length && (
+            <EmptyList>
+              {showOnlyChanged
+                ? "אין שינויים ממתינים לשמירה."
+                : "אין ציוד חתום לחייל."}
+            </EmptyList>
           )}
         </div>
       </section>

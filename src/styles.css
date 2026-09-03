@@ -862,6 +862,74 @@ textarea::placeholder {
 .selected-signing-item small {
   color: #627d86;
 }
+.draft-change-legend {
+  margin: -3px 0 10px;
+  color: #7b681d;
+  font-size: 13px;
+}
+.signing-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.signing-list-heading h2 {
+  margin: 0;
+}
+.changed-items-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  color: #405a61;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.changed-items-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #166878;
+}
+.list-card.draft-change {
+  border-inline-start: 4px solid #d2a62c;
+  background: #fffaf0;
+}
+.list-card.draft-change.draft-removal {
+  border-inline-start-color: #c95a50;
+  background: #fff5f3;
+}
+.draft-change-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 5px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #fff0bd;
+  color: #70590e;
+  font-size: 12px;
+  font-weight: 700;
+}
+.draft-change-badge.removal {
+  background: #f8d7d3;
+  color: #8f2f27;
+}
+.quantity-change-summary {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+.quantity-change-summary small {
+  color: #6e6260;
+  font-size: 12px;
+}
+.pending-removal-quantity {
+  color: #8f2f27;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
 .signing-add-grid > div {
   display: grid;
   align-content: start;

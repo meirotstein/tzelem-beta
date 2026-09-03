@@ -220,6 +220,8 @@ For operations that update current state and append history, minimize partial wr
 - Keep a quantity item visible while its numeric input is temporarily empty, show inline validation, and block saving until a valid whole quantity is entered.
 - Track whether the signing draft differs from the soldier's current holdings. Before navigating to another screen or replacing the selected soldier, use the app confirmation modal to warn that unsaved changes will be lost.
 - Confirm before removing any numbered or quantity item from the signing draft, even though the draft has not yet been saved.
+- Visually mark every signing-list row whose addition, removal, or quantity change is still unsaved. For every changed quantity row, show its original persisted quantity. Keep pending removals visible with an undo action until the signing saves successfully; clear the marks only when the refreshed persisted state matches the draft.
+- Provide a `שינויים בלבד` toggle on the signing equipment list that filters to every unsaved addition, removal, quantity change, or invalid temporary quantity value. Reset it when selecting a different soldier.
 - Label equipment-addition actions `הוספה להחתמה` so they are not confused with creating inventory records.
 - Quantity-to-add inputs must allow temporarily empty text while editing and validate a positive integer only when applying the addition.
 - Title the draft-addition section `הוספת ציוד להחתמה`. Below it, expose the permitted `סוג ציוד חדש` and `פריט צל״מ חדש` inventory actions using the same modals as the inventory screen. Saving those modals must refresh their option lists without resetting the in-progress signing draft.
