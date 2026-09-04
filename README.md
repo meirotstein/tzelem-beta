@@ -50,11 +50,14 @@ npm run test:e2e:headed
 npm run test:e2e:mobile
 ```
 
-The current E2E fixtures cover admin, user-without-definition, platoon-limited,
-`צל״מ`-only, and Drive read-only access. They verify scoped records and actions,
-admin-only settings, signing draft protection, the touch-signature canvas, and
-an in-memory signing save. Vitest repository tests remain responsible for the
-exact Google Sheets/App Script requests and server-side mutation enforcement.
+The current suite runs 21 behavioral scenarios in both desktop Chromium and a
+Pixel 7 viewport. It covers navigation; admin, user-without-definition,
+platoon-limited, `צל״מ`-only, and Drive read-only access; soldier validation,
+creation, and signing context; inventory form rules and inventory-to-signing
+context; signing draft editing, confirmation, signature, save, and failure
+behavior; lazy signature history; and permission-form scope controls. Vitest
+repository tests remain responsible for exact Google Sheets/App Script requests
+and server-side mutation enforcement.
 
 Failed E2E runs retain a screenshot, video, and Playwright trace under the
 ignored `test-results` directory. GitHub Actions installs Chromium and runs the

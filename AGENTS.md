@@ -320,6 +320,39 @@ Filtering is combinable. Clear filters must be easy to discover on mobile.
 - Run `npm run test:e2e` for changes that affect navigation, permissions,
   inventory actions, signing, dialogs, or responsive behavior.
 
+### Current automated E2E characterization coverage
+
+The Playwright suite contains 21 behavioral scenarios. Every scenario runs in
+desktop Chromium and a Pixel 7 mobile viewport, for 42 browser checks:
+
+- Navigation: an admin can open Dashboard, Signings, Soldiers, Inventory,
+  History, and Settings and each destination renders its expected page.
+- Permissions: admin-only Settings and permission management; admin access to
+  all platoons even if an admin row contains a platoon value; the default
+  full-operational/non-admin behavior for an email without a permission row;
+  platoon-limited soldier, filter, inventory, and management visibility;
+  `צל״מ`-only inventory and method controls; and Drive read-only browsing with
+  all writes unavailable.
+- Soldiers: duplicate personal-number validation before saving; a successful
+  in-memory soldier creation followed by silent page refresh and success toast;
+  opening Signings from soldier details with that soldier preserved; and a
+  simulated repository failure shown as an error toast while the form remains
+  open and unsaved.
+- Inventory: a new equipment type defaults to `כמותי`; the new numbered-item
+  form lists only `צל״מ` catalog entries; starting a signing from an inventory
+  item carries that item through soldier selection into the draft; and removal
+  opens the application's descriptive confirmation dialog.
+- Signing drafts: numbered-item signing with visual unsaved state, required
+  drawn signature, in-memory save, receipt, and cleared draft state; warning
+  before navigating away with changes; temporarily empty quantity input keeps
+  its row and shows validation; changed quantities show the original value and
+  participate in `שינויים בלבד`; draft removal requires confirmation; and
+  cancelling the signature preserves the unsaved draft without writing.
+- History and signatures: a saved signing is grouped into one history card and
+  its stored signature is fetched and rendered only after `הצגת חתימה`.
+- Settings: the admin permission form exposes equipment scope and platoon scope,
+  and selecting admin disables those narrower scope controls.
+
 Before considering a change complete:
 
 - Run TypeScript/build checks.

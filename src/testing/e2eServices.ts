@@ -13,6 +13,7 @@ import type {
   SignatureSummary,
   SigningSessionInput,
   Soldier,
+  SoldierInput,
 } from "../domain/types";
 import { SpreadsheetRepository } from "../services/spreadsheetRepository";
 
@@ -192,6 +193,7 @@ class FakeSpreadsheetRepository extends SpreadsheetRepository {
     private readonly store: {
       data: CompanyData;
       signatures: Map<number, SignatureRecord>;
+      failure: string;
     },
   ) {
     super(spreadsheetId);
@@ -205,11 +207,54 @@ class FakeSpreadsheetRepository extends SpreadsheetRepository {
     return "";
   }
 
+  override async addSoldier(
+    data: CompanyData,
+    input: SoldierInput,
+  ): Promise<void> {
+    if (this.store.failure === "add-soldier")
+      throw new Error("כשל בדיקה בשמירת החייל.");
+    if (!data.meta.editable) throw new Error("הגיליון פתוח לקריאה בלבד.");
+    const access = resolveUserAccess(data.meta.userEmail, data.permissions);
+    const soldier: Soldier = {
+      row: Math.max(1, ...this.store.data.soldiers.map((item) => item.row)) + 1,
+      name: input.name.trim(),
+      personalNumber: input.personalNumber.trim(),
+      platoon: input.platoon.trim(),
+      active: input.active ?? true,
+      phone: input.phone?.trim() || "",
+    };
+    if (!canAccessSoldier(access, soldier))
+      throw new Error("אין הרשאה להוסיף חייל למחלקה זו.");
+    if (
+      this.store.data.soldiers.some(
+        (item) => item.personalNumber === soldier.personalNumber,
+      )
+    )
+      throw new Error("המספר האישי כבר קיים במערכת.");
+    this.store.data.soldiers.push(soldier);
+    this.store.data.movements.push({
+      row: this.store.data.movements.length + 2,
+      timestamp: new Date().toISOString(),
+      action: "הוספת חייל",
+      method: "",
+      type: "",
+      variant: "",
+      number: "",
+      quantity: 0,
+      previousSoldier: "",
+      newSoldier: soldier.personalNumber,
+      actor: data.meta.userEmail,
+      note: "",
+    });
+  }
+
   override async saveSigningSession(
     data: CompanyData,
     soldier: Soldier,
     input: SigningSessionInput,
   ): Promise<MovementEntry[]> {
+    if (this.store.failure === "signing")
+      throw new Error("כשל בדיקה בשמירת ההחתמה.");
     this.ensureSigningAccess(data, soldier, input);
     const timestamp = new Date().toISOString();
     const actor = this.store.data.meta.userEmail;
@@ -370,6 +415,7 @@ export function createE2EServices(): AppServices {
   const store = {
     data: fixtureData(profile),
     signatures: new Map<number, SignatureRecord>(),
+    failure: new URL(window.location.href).searchParams.get("failure") || "",
   };
   return {
     auth: new FakeAuthService(profile),
