@@ -15,6 +15,19 @@ The development server runs at `http://localhost:3000`. Open the app with a spre
 http://localhost:3000/?spid=GOOGLE_SPREADSHEET_ID
 ```
 
+## Source structure
+
+- `src/App.tsx` composes authentication, spreadsheet state, navigation,
+  mutations, permissions, pages, and global overlays.
+- `src/pages` contains the six application screens: Dashboard, Signings,
+  Soldiers, Inventory, History, and Settings.
+- `src/features` contains domain-focused forms, detail dialogs, sharing, and
+  signature components.
+- `src/components` contains reusable UI primitives, entry states, and the
+  authenticated layout/navigation.
+- `src/app` contains UI coordination types and shared display formatting.
+- `src/domain` and `src/services` retain business rules and Google integration.
+
 ## Checks
 
 ```sh

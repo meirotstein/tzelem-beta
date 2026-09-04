@@ -16,6 +16,15 @@ The product name shown in the UI is **מת״ש**, with the subtitle **ניהול
 ## Technical direction
 
 - React, TypeScript, and Vite.
+- Keep `src/App.tsx` as the composition root for authentication, spreadsheet
+  lifecycle, permission scoping, navigation guards, mutations, and global
+  overlays. Screen implementations belong in `src/pages`; reusable visual
+  primitives and entry/layout states belong in `src/components`; domain-focused
+  forms, details, sharing, and signature UI belong in `src/features`; shared UI
+  coordination types and formatters belong in `src/app`.
+- Pages must receive normalized data and explicit callbacks through props. They
+  must not construct Google services or write to Sheets directly. Feature
+  components may be shared by pages, but pages should not import one another.
 - Client-only Google integration; no application backend and no server-held Google credentials.
 - Use the legacy Google login method from Shavzak (`gapi.auth2`) as explicitly requested.
 - Access Google Sheets and Drive APIs from the signed-in browser session.
