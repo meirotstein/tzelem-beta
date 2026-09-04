@@ -28,6 +28,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
       - run: npm run build
         env:
           VITE_APPS_SCRIPT_DEPLOYMENT_ID: ${{ vars.APPS_SCRIPT_DEPLOYMENT_ID }}

@@ -22,6 +22,44 @@ npm test
 npm run build
 ```
 
+## Offline end-to-end tests
+
+Playwright runs the real React UI against deterministic in-memory Google auth
+and spreadsheet substitutes. It does not open Google login, read a spreadsheet,
+or call Apps Script. The fake services are loaded only by Vite's `e2e` mode and
+cannot be enabled with a URL parameter in a production build.
+
+Install Playwright's pinned Chromium once on a development machine:
+
+```sh
+npx playwright install chromium
+```
+
+Run the desktop and mobile suites:
+
+```sh
+npm run test:e2e
+```
+
+For the interactive runner, visible automatic browser execution, or only the
+mobile project:
+
+```sh
+npm run test:e2e:ui
+npm run test:e2e:headed
+npm run test:e2e:mobile
+```
+
+The current E2E fixtures cover admin, user-without-definition, platoon-limited,
+`צל״מ`-only, and Drive read-only access. They verify scoped records and actions,
+admin-only settings, signing draft protection, the touch-signature canvas, and
+an in-memory signing save. Vitest repository tests remain responsible for the
+exact Google Sheets/App Script requests and server-side mutation enforcement.
+
+Failed E2E runs retain a screenshot, video, and Playwright trace under the
+ignored `test-results` directory. GitHub Actions installs Chromium and runs the
+same suite before deploying Pages.
+
 ## GitHub Pages deployment
 
 The workflow in `.github/workflows/deploy.yml` builds, tests, and deploys the app after pushes to `main`.

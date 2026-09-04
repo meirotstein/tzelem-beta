@@ -309,6 +309,17 @@ Filtering is combinable. Clear filters must be easy to discover on mobile.
 
 ## Verification expectations
 
+- Keep Playwright E2E tests offline: run the production React UI through Vite's
+  dedicated `e2e` mode with the in-memory auth/repository fixture. Never require
+  a Google test account, live spreadsheet, OAuth secret, or Apps Script
+  deployment for automated UI tests.
+- Exercise permission profiles in both desktop and mobile Playwright projects:
+  admin, user without a permission row, platoon-limited, equipment-scope
+  limited, and Drive read-only. The E2E-only fake services must not be
+  activatable by a production URL parameter.
+- Run `npm run test:e2e` for changes that affect navigation, permissions,
+  inventory actions, signing, dialogs, or responsive behavior.
+
 Before considering a change complete:
 
 - Run TypeScript/build checks.

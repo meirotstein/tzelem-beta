@@ -113,7 +113,24 @@ type ConfirmationRequest = {
   onConfirm: () => void;
 };
 
-const auth = new GoogleAuthService();
+export interface AppServices {
+  auth: Pick<
+    GoogleAuthService,
+    | "init"
+    | "isSignedIn"
+    | "restoreSession"
+    | "signIn"
+    | "currentUserName"
+    | "signOut"
+  >;
+  createRepository: (spreadsheetId: string) => SpreadsheetRepository;
+}
+
+const productionServices: AppServices = {
+  auth: new GoogleAuthService(),
+  createRepository: (spreadsheetId) =>
+    new SpreadsheetRepository(spreadsheetId),
+};
 const idFromValue = (value: string) =>
   value.trim().match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/)?.[1] ||
   value.trim();
@@ -251,7 +268,8 @@ const EmptyList = ({ children }: { children: ReactNode }) => (
   <div className="empty-list">{children}</div>
 );
 
-export function App() {
+export function App({ services = productionServices }: { services?: AppServices }) {
+  const { auth, createRepository } = services;
   const [appState, setAppState] = useState<AppState>("booting");
   const [spreadsheetId, setSpreadsheetId] = useState(initialSpreadsheetId);
   const [sheetInput, setSheetInput] = useState(initialSpreadsheetId);
@@ -322,8 +340,8 @@ export function App() {
     if (view === "settings" && access && !access.admin) setView("dashboard");
   }, [access, view]);
   const repo = useMemo(
-    () => (spreadsheetId ? new SpreadsheetRepository(spreadsheetId) : null),
-    [spreadsheetId],
+    () => (spreadsheetId ? createRepository(spreadsheetId) : null),
+    [createRepository, spreadsheetId],
   );
 
   function openSignings(
@@ -449,7 +467,7 @@ export function App() {
     try {
       setAppState("loading");
       setError("");
-      const loaded = await new SpreadsheetRepository(id).inspect();
+      const loaded = await createRepository(id).inspect();
       if (cancelled) return;
       setSpreadsheetId(id);
       setSheetInput(id);
@@ -594,6 +612,7 @@ export function App() {
   if (appState === "select-sheet")
     return (
       <SheetPicker
+        name={signedInName}
         value={sheetInput}
         setValue={setSheetInput}
         error={error}
@@ -1367,12 +1386,14 @@ function Welcome({ error, onSignIn }: { error: string; onSignIn: () => void }) {
   );
 }
 function SheetPicker({
+  name,
   value,
   setValue,
   error,
   onSubmit,
   onSignOut,
 }: {
+  name: string;
   value: string;
   setValue: (value: string) => void;
   error: string;
@@ -1380,7 +1401,7 @@ function SheetPicker({
   onSignOut: () => void;
 }) {
   return (
-    <ShellHeader name={auth.currentUserName()} onSignOut={onSignOut}>
+    <ShellHeader name={name} onSignOut={onSignOut}>
       <form className="center-card" onSubmit={onSubmit}>
         <h2>בחירת גיליון</h2>
         <p>הדביקו קישור לגיליון Google Sheets או את המזהה שלו.</p>
