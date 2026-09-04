@@ -60,6 +60,14 @@ const fixtureData = (profile: E2EProfile): CompanyData => {
         active: true,
         phone: "0502222222",
       },
+      {
+        row: 4,
+        name: "יהודה ישראלי",
+        personalNumber: "4444444",
+        platoon: "1",
+        active: true,
+        phone: "0503333333",
+      },
     ],
     catalog: [
       {
@@ -258,6 +266,7 @@ class FakeSpreadsheetRepository extends SpreadsheetRepository {
     this.ensureSigningAccess(data, soldier, input);
     const timestamp = new Date().toISOString();
     const actor = this.store.data.meta.userEmail;
+    const access = resolveUserAccess(data.meta.userEmail, data.permissions);
     const movements: MovementEntry[] = [];
     const appendMovement = (
       movement: Omit<MovementEntry, "row" | "timestamp" | "actor">,
@@ -292,6 +301,30 @@ class FakeSpreadsheetRepository extends SpreadsheetRepository {
         note: "",
       });
     });
+    input.numberedTransfers.forEach(({ item: requested, from }) => {
+      if (!canAccessSoldier(access, from))
+        throw new Error("אין הרשאה לפעול עבור מחלקת חייל המקור.");
+      const item = this.store.data.numberedItems.find(
+        (candidate) =>
+          numberedItemKey(candidate.type, candidate.number) ===
+          numberedItemKey(requested.type, requested.number),
+      );
+      if (!item || item.assignedTo !== from.personalNumber)
+        throw new Error("לא ניתן להעביר את פריט הצל״מ.");
+      item.assignedTo = soldier.personalNumber;
+      item.status = "משויך";
+      appendMovement({
+        action: "העברה",
+        method: "צל״מ",
+        type: item.type,
+        variant: item.variant,
+        number: item.number,
+        quantity: 1,
+        previousSoldier: from.personalNumber,
+        newSoldier: soldier.personalNumber,
+        note: "",
+      });
+    });
     input.numberedToReturn.forEach((requested) => {
       const item = this.store.data.numberedItems.find(
         (candidate) =>
@@ -310,6 +343,44 @@ class FakeSpreadsheetRepository extends SpreadsheetRepository {
         quantity: 0,
         previousSoldier: soldier.personalNumber,
         newSoldier: "",
+        note: "",
+      });
+    });
+    input.quantityTransfers.forEach(({ item, from, quantity }) => {
+      if (!canAccessSoldier(access, from))
+        throw new Error("אין הרשאה לפעול עבור מחלקת חייל המקור.");
+      const key = catalogKey(item.type, item.variant);
+      const source = this.store.data.holdings.find(
+        (candidate) =>
+          candidate.personalNumber === from.personalNumber &&
+          catalogKey(candidate.type, candidate.variant) === key,
+      );
+      const target = this.store.data.holdings.find(
+        (candidate) =>
+          candidate.personalNumber === soldier.personalNumber &&
+          catalogKey(candidate.type, candidate.variant) === key,
+      );
+      if (!source || source.quantity < quantity)
+        throw new Error("הכמות להעברה גדולה מהכמות המוחזקת.");
+      source.quantity -= quantity;
+      if (target) target.quantity += quantity;
+      else
+        this.store.data.holdings.push({
+          row: this.store.data.holdings.length + 2,
+          personalNumber: soldier.personalNumber,
+          type: item.type,
+          variant: item.variant,
+          quantity,
+        });
+      appendMovement({
+        action: "העברה",
+        method: "כמותי",
+        type: item.type,
+        variant: item.variant,
+        number: "",
+        quantity,
+        previousSoldier: from.personalNumber,
+        newSoldier: soldier.personalNumber,
         note: "",
       });
     });
@@ -401,11 +472,16 @@ class FakeSpreadsheetRepository extends SpreadsheetRepository {
     if (!canAccessSoldier(access, soldier))
       throw new Error("אין הרשאה לפעול עבור מחלקת החייל.");
     if (
-      (input.numberedToAssign.length || input.numberedToReturn.length) &&
+      (input.numberedToAssign.length ||
+        input.numberedToReturn.length ||
+        input.numberedTransfers.length) &&
       !canAccessMethod(access, "צל״מ")
     )
       throw new Error("אין הרשאה לטפל בפריטי צל״מ.");
-    if (input.quantityTargets.length && !canAccessMethod(access, "כמותי"))
+    if (
+      (input.quantityTargets.length || input.quantityTransfers.length) &&
+      !canAccessMethod(access, "כמותי")
+    )
       throw new Error("אין הרשאה לטפל בציוד כמותי.");
   }
 }

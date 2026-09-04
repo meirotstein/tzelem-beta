@@ -55,12 +55,19 @@ export function SigningsView({
   const [showOnlyChanged, setShowOnlyChanged] = useState(false);
   const [pendingInitialItem, setPendingInitialItem] =
     useState<SigningSeed | null>(initialItem);
+  const [transferSeed, setTransferSeed] = useState<SigningSeed | null>(
+    initialItem?.kind === "numberedTransfer" ||
+      initialItem?.kind === "quantityTransfer"
+      ? initialItem
+      : null,
+  );
   const [pendingSigning, setPendingSigning] = useState<Omit<
     SigningSessionInput,
     "signature"
   > | null>(null);
   const pendingInitialItemLabel = pendingInitialItem
-    ? pendingInitialItem.kind === "numbered"
+    ? pendingInitialItem.kind === "numbered" ||
+      pendingInitialItem.kind === "numberedTransfer"
       ? `${itemLabel(
           pendingInitialItem.item.type,
           pendingInitialItem.item.variant,
@@ -119,7 +126,10 @@ export function SigningsView({
           String(holding.quantity),
         ]),
     );
-    if (pendingInitialItem?.kind === "numbered") {
+    if (
+      pendingInitialItem?.kind === "numbered" ||
+      pendingInitialItem?.kind === "numberedTransfer"
+    ) {
       const seededItem = data.numberedItems.find(
         (item) =>
           numberedItemKey(item.type, item.number) ===
@@ -128,11 +138,15 @@ export function SigningsView({
             pendingInitialItem.item.number,
           ),
       );
-      if (
-        seededItem?.active &&
-        seededItem.status === "זמין" &&
-        !seededItem.assignedTo
-      )
+      const canAdd =
+        pendingInitialItem.kind === "numberedTransfer"
+          ? seededItem?.active &&
+            seededItem.assignedTo === pendingInitialItem.from.personalNumber &&
+            seededItem.assignedTo !== selectedSoldier.personalNumber
+          : seededItem?.active &&
+            seededItem.status === "זמין" &&
+            !seededItem.assignedTo;
+      if (canAdd && seededItem)
         nextNumbered.add(numberedItemKey(seededItem.type, seededItem.number));
     }
     if (pendingInitialItem?.kind === "quantity") {
@@ -151,6 +165,36 @@ export function SigningsView({
       ) {
         const key = catalogKey(seededItem.type, seededItem.variant);
         nextQuantities[key] = String(Number(nextQuantities[key] || 0) + 1);
+      }
+    }
+    if (pendingInitialItem?.kind === "quantityTransfer") {
+      const seededItem = data.catalog.find(
+        (item) =>
+          catalogKey(item.type, item.variant) ===
+          catalogKey(
+            pendingInitialItem.item.type,
+            pendingInitialItem.item.variant,
+          ),
+      );
+      const sourceHolding = data.holdings.find(
+        (holding) =>
+          holding.personalNumber === pendingInitialItem.from.personalNumber &&
+          catalogKey(holding.type, holding.variant) ===
+            catalogKey(
+              pendingInitialItem.item.type,
+              pendingInitialItem.item.variant,
+            ),
+      );
+      if (
+        seededItem?.active &&
+        seededItem.method === "כמותי" &&
+        sourceHolding &&
+        sourceHolding.quantity >= pendingInitialItem.quantity
+      ) {
+        const key = catalogKey(seededItem.type, seededItem.variant);
+        nextQuantities[key] = String(
+          Number(nextQuantities[key] || 0) + pendingInitialItem.quantity,
+        );
       }
     }
     setSelectedNumbered(nextNumbered);
@@ -308,8 +352,27 @@ export function SigningsView({
           catalogKey(item.type, item.variant),
     )?.quantity || 0;
   const numberedToAssign = selectedNumberedItems.filter(
-    (item) => item.assignedTo !== selectedSoldier.personalNumber,
+    (item) =>
+      item.assignedTo !== selectedSoldier.personalNumber &&
+      !(
+        transferSeed?.kind === "numberedTransfer" &&
+        numberedItemKey(item.type, item.number) ===
+          numberedItemKey(transferSeed.item.type, transferSeed.item.number)
+      ),
   );
+  const numberedTransfers =
+    transferSeed?.kind === "numberedTransfer" &&
+    selectedNumbered.has(
+      numberedItemKey(transferSeed.item.type, transferSeed.item.number),
+    )
+      ? [
+          {
+            item: transferSeed.item,
+            from: transferSeed.from,
+            note: transferSeed.note,
+          },
+        ]
+      : [];
   const numberedToReturn = currentNumbered.filter(
     (item) => !selectedNumbered.has(numberedItemKey(item.type, item.number)),
   );
@@ -324,6 +387,32 @@ export function SigningsView({
     ...selectedNumberedItems,
     ...numberedToReturn,
   ].filter((item) => !showOnlyChanged || numberedHasDraftChange(item));
+  const quantityTransferKey =
+    transferSeed?.kind === "quantityTransfer"
+      ? catalogKey(transferSeed.item.type, transferSeed.item.variant)
+      : "";
+  const quantityTransferItem =
+    transferSeed?.kind === "quantityTransfer"
+      ? quantityCatalog.find(
+          (item) => catalogKey(item.type, item.variant) === quantityTransferKey,
+        )
+      : undefined;
+  const quantityTransferValue = quantityTransferItem
+    ? Number(quantityValues[quantityTransferKey] ?? currentQuantity(quantityTransferItem))
+    : 0;
+  const quantityTransferAmount = quantityTransferItem
+    ? quantityTransferValue - currentQuantity(quantityTransferItem)
+    : 0;
+  const quantityTransfers =
+    transferSeed?.kind === "quantityTransfer" && quantityTransferItem &&
+    Number.isInteger(quantityTransferAmount) && quantityTransferAmount > 0
+      ? [{
+          item: quantityTransferItem,
+          from: transferSeed.from,
+          quantity: quantityTransferAmount,
+          note: transferSeed.note,
+        }]
+      : [];
   const quantityTargets = quantityCatalog
     .map((item) => ({
       item,
@@ -331,7 +420,12 @@ export function SigningsView({
         quantityValues[catalogKey(item.type, item.variant)] ?? 0,
       ),
     }))
-    .filter((target) => target.quantity !== currentQuantity(target.item));
+    .filter(
+      (target) =>
+        catalogKey(target.item.type, target.item.variant) !==
+          quantityTransferKey &&
+        target.quantity !== currentQuantity(target.item),
+    );
   const hasInvalidQuantityValue = quantityCatalog.some((item) => {
     const key = catalogKey(item.type, item.variant);
     if (!Object.hasOwn(quantityValues, key)) return false;
@@ -341,11 +435,21 @@ export function SigningsView({
       raw === "" ||
       !Number.isInteger(value) ||
       value < 0 ||
-      value > currentQuantity(item) + availableQuantity(item, data.holdings)
+      value >
+        currentQuantity(item) +
+          (key === quantityTransferKey &&
+          transferSeed?.kind === "quantityTransfer"
+            ? data.holdings.find(
+                (holding) =>
+                  holding.personalNumber === transferSeed.from.personalNumber &&
+                  catalogKey(holding.type, holding.variant) === key,
+              )?.quantity || 0
+            : availableQuantity(item, data.holdings))
     );
   });
   const changeCount =
-    numberedToAssign.length + numberedToReturn.length + quantityTargets.length;
+    numberedToAssign.length + numberedToReturn.length +
+    numberedTransfers.length + quantityTargets.length + quantityTransfers.length;
   const displayedQuantityItems = quantityCatalog.filter(
     (item) => {
       const key = catalogKey(item.type, item.variant);
@@ -561,7 +665,16 @@ export function SigningsView({
                           min="0"
                           max={
                             originalQuantity +
-                            availableQuantity(item, data.holdings)
+                            (key === quantityTransferKey &&
+                            transferSeed?.kind === "quantityTransfer"
+                              ? data.holdings.find(
+                                  (holding) =>
+                                    holding.personalNumber ===
+                                      transferSeed.from.personalNumber &&
+                                    catalogKey(holding.type, holding.variant) ===
+                                      key,
+                                )?.quantity || 0
+                              : availableQuantity(item, data.holdings))
                           }
                           step="1"
                           value={rawQuantity}
@@ -848,7 +961,9 @@ export function SigningsView({
             setPendingSigning({
               numberedToAssign,
               numberedToReturn,
+              numberedTransfers,
               quantityTargets,
+              quantityTransfers,
             })
           }
         >
@@ -871,7 +986,10 @@ export function SigningsView({
               ...pendingSigning,
               signature,
             });
-            if (saved) setPendingSigning(null);
+            if (saved) {
+              setPendingSigning(null);
+              setTransferSeed(null);
+            }
           }}
         />
       )}

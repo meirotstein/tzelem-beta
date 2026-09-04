@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { drawValidSignature, selectMatchingOption } from "./testHelpers";
 
 type Profile = "admin" | "all" | "platoon" | "tzelem" | "readonly";
 
@@ -52,6 +53,38 @@ test.describe("application permissions", () => {
     await expect(page.getByRole("button", { name: "פריט צל״מ חדש" })).toBeVisible();
     await expect(page.getByText("צ-100", { exact: false })).toBeVisible();
     await expect(page.getByText("צ-200", { exact: false })).toHaveCount(0);
+  });
+
+  test("platoon-limited user can transfer equipment within their platoon", async ({ page }) => {
+    await openAs(page, "platoon");
+    await page.getByRole("button", { name: "חיילים" }).click();
+    await page.getByText("דוד כהן", { exact: true }).click();
+    const soldierDialog = page.getByRole("dialog", { name: "דוד כהן" });
+    const itemCard = soldierDialog
+      .locator("article.list-card")
+      .filter({ hasText: "חולצה" });
+    await itemCard.getByRole("button", { name: "העברה" }).click();
+
+    const transferDialog = page.getByRole("dialog", { name: "העברת ציוד" });
+    const target = transferDialog.getByLabel("העברה אל");
+    await expect(target.getByRole("option", { name: /מאיר לוי/ })).toHaveCount(0);
+    await selectMatchingOption(target, "יהודה ישראלי");
+    await transferDialog.getByRole("button", { name: "אישור" }).click();
+
+    await expect(
+      page.getByRole("heading", { name: "החתמה — יהודה ישראלי" }),
+    ).toBeVisible();
+    await expect(
+      page.locator("article.list-card").filter({ hasText: "חולצה" }),
+    ).toContainText("טרם נשמר");
+    await page.getByRole("button", { name: "שמירת ההחתמה" }).click();
+    await drawValidSignature(page);
+    await page
+      .getByRole("button", { name: "אישור ושמירת ההחתמה" })
+      .click();
+    const receipt = page.getByRole("dialog", { name: "ההחתמה נשמרה" });
+    await expect(receipt).toContainText("העברה");
+    await expect(receipt).toContainText("חולצה");
   });
 
   test("equipment scope hides quantity-managed data and controls", async ({ page }) => {

@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Action } from "../../app/types";
 import type { CompanyData } from "../../domain/types";
 import { EQUIPMENT_STATUSES } from "../../domain/types";
+import { itemLabel } from "../../domain/schema";
 import { Field, Modal } from "../../components/ui";
 
 export function ActionModal({
@@ -36,13 +37,43 @@ export function ActionModal({
   const needsSoldier =
     (action.kind === "numbered" && action.mode === "assign") ||
     (action.kind === "quantity" && action.mode === "issue" && !action.soldier);
+  const numberedTransfer =
+    action.kind === "numbered" &&
+    action.mode === "assign" &&
+    Boolean(action.item.assignedTo);
+  const quantityTransfer =
+    action.kind === "quantity" && action.mode === "transfer";
+  const transferSource = numberedTransfer
+    ? data.soldiers.find(
+        (candidate) => candidate.personalNumber === action.item.assignedTo,
+      )
+    : quantityTransfer
+      ? action.soldier
+      : undefined;
+  const transferItemLabel =
+    numberedTransfer || quantityTransfer
+      ? itemLabel(
+          action.item.type,
+          action.item.variant,
+          action.kind === "quantity" ? action.item.variantLabel : "",
+        )
+      : "";
+  const sourceQuantity =
+    quantityTransfer && transferSource
+      ? data.holdings.find(
+          (holding) =>
+            holding.personalNumber === transferSource.personalNumber &&
+            holding.type === action.item.type &&
+            holding.variant === action.item.variant,
+        )?.quantity || 0
+      : 0;
   const title =
     action.kind === "stock"
       ? "עדכון מלאי כולל"
-      : action.mode === "assign" || action.mode === "issue"
-        ? "החתמת ציוד"
-        : action.mode === "transfer"
-          ? "העברת ציוד"
+      : numberedTransfer || quantityTransfer
+        ? "העברת ציוד"
+        : action.mode === "assign" || action.mode === "issue"
+          ? "החתמת ציוד"
           : action.mode === "status"
             ? "שינוי סטטוס"
             : "החזרת ציוד";
@@ -54,8 +85,23 @@ export function ActionModal({
           onSubmit({ soldier, target, quantity, status, note });
         }}
       >
+        {(numberedTransfer || quantityTransfer) && transferSource && (
+          <div className="action-context">
+            <strong>
+              {transferItemLabel}
+              {numberedTransfer && ` · מספר צ ${action.item.number}`}
+            </strong>
+            <span>
+              העברה מ־{transferSource.name} · מספר אישי{" "}
+              <bdi>{transferSource.personalNumber}</bdi>
+            </span>
+            {quantityTransfer && (
+              <small>כמות נוכחית: {sourceQuantity} יח׳</small>
+            )}
+          </div>
+        )}
         {needsSoldier && (
-          <Field label="חייל">
+          <Field label={numberedTransfer ? "העברה אל" : "חייל"}>
             <select
               required
               value={soldier}

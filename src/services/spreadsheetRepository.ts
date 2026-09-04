@@ -1102,9 +1102,14 @@ export class SpreadsheetRepository {
     this.ensureEditable(data);
     soldier = this.currentSoldier(data, soldier);
     this.ensureSoldierAccess(data, soldier);
-    if (input.numberedToAssign.length || input.numberedToReturn.length)
+    if (
+      input.numberedToAssign.length ||
+      input.numberedToReturn.length ||
+      input.numberedTransfers.length
+    )
       this.ensureMethodAccess(data, "צל״מ");
-    if (input.quantityTargets.length) this.ensureMethodAccess(data, "כמותי");
+    if (input.quantityTargets.length || input.quantityTransfers.length)
+      this.ensureMethodAccess(data, "כמותי");
     const timestamp = new Date().toISOString();
     const requests: any[] = [];
     const drafts: MovementDraft[] = [];
@@ -1118,10 +1123,19 @@ export class SpreadsheetRepository {
         numberedItemKey(item.type, item.number),
       ),
     );
+    const transferredKeys = new Set(
+      input.numberedTransfers.map(({ item }) =>
+        numberedItemKey(item.type, item.number),
+      ),
+    );
     if (
       assignedKeys.size !== input.numberedToAssign.length ||
       returnedKeys.size !== input.numberedToReturn.length ||
-      [...assignedKeys].some((key) => returnedKeys.has(key))
+      transferredKeys.size !== input.numberedTransfers.length ||
+      [...assignedKeys].some(
+        (key) => returnedKeys.has(key) || transferredKeys.has(key),
+      ) ||
+      [...returnedKeys].some((key) => transferredKeys.has(key))
     ) {
       throw new Error("טיוטת ההחתמה מכילה פריטי צל״מ כפולים.");
     }
@@ -1187,7 +1201,102 @@ export class SpreadsheetRepository {
       });
     }
 
+    for (const transfer of input.numberedTransfers) {
+      const item = this.currentNumberedItem(data, transfer.item);
+      const from = this.currentSoldier(data, transfer.from);
+      this.ensureSoldierAccess(data, from);
+      if (
+        !soldier.active ||
+        !item.active ||
+        item.status !== "משויך" ||
+        item.assignedTo !== from.personalNumber ||
+        from.personalNumber === soldier.personalNumber
+      )
+        throw new Error(`לא ניתן להעביר את הפריט ${item.type} ${item.number}.`);
+      requests.push(
+        updateRow(this.sheetId(data, "numberedItems"), item.row, [
+          item.type,
+          item.variant,
+          item.number,
+          "משויך",
+          soldier.personalNumber,
+          item.note,
+          item.active,
+          item.location,
+        ]),
+      );
+      drafts.push({
+        action: "העברה",
+        method: "צל״מ",
+        type: item.type,
+        variant: item.variant,
+        number: item.number,
+        quantity: 1,
+        previousSoldier: from.personalNumber,
+        newSoldier: soldier.personalNumber,
+        note: normalizeText(transfer.note),
+      });
+    }
+
     const quantityKeys = new Set<string>();
+    for (const transfer of input.quantityTransfers) {
+      const item = this.currentCatalogItem(data, transfer.item);
+      const from = this.currentSoldier(data, transfer.from);
+      const key = catalogKey(item.type, item.variant);
+      if (quantityKeys.has(key))
+        throw new Error("טיוטת ההחתמה מכילה ציוד כמותי כפול.");
+      quantityKeys.add(key);
+      this.ensureSoldierAccess(data, from);
+      if (
+        item.method !== "כמותי" ||
+        !item.active ||
+        !soldier.active ||
+        from.personalNumber === soldier.personalNumber ||
+        !Number.isInteger(transfer.quantity) ||
+        transfer.quantity <= 0
+      )
+        throw new Error(`לא ניתן להעביר את ${item.type}.`);
+      const source = holdingFor(
+        data.holdings,
+        from.personalNumber,
+        item.type,
+        item.variant,
+      );
+      const target = holdingFor(
+        data.holdings,
+        soldier.personalNumber,
+        item.type,
+        item.variant,
+      );
+      if (!source || source.quantity < transfer.quantity)
+        throw new Error("הכמות להעברה גדולה מהכמות המוחזקת.");
+      requests.push(
+        this.holdingWriteRequest(
+          data,
+          source,
+          from.personalNumber,
+          item,
+          source.quantity - transfer.quantity,
+        ),
+        this.holdingWriteRequest(
+          data,
+          target,
+          soldier.personalNumber,
+          item,
+          (target?.quantity || 0) + transfer.quantity,
+        ),
+      );
+      drafts.push({
+        action: "העברה",
+        method: "כמותי",
+        type: item.type,
+        variant: item.variant,
+        quantity: transfer.quantity,
+        previousSoldier: from.personalNumber,
+        newSoldier: soldier.personalNumber,
+        note: normalizeText(transfer.note),
+      });
+    }
     for (const target of input.quantityTargets) {
       const item = this.currentCatalogItem(data, target.item);
       const key = catalogKey(item.type, item.variant);

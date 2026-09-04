@@ -63,11 +63,13 @@ npm run test:e2e:headed
 npm run test:e2e:mobile
 ```
 
-The current suite runs 21 behavioral scenarios in both desktop Chromium and a
-Pixel 7 viewport. It covers navigation; admin, user-without-definition,
+The current suite runs 24 behavioral scenarios in both desktop Chromium and a
+Pixel 7 viewport (48 checks). It covers navigation; admin, user-without-definition,
 platoon-limited, `צל״מ`-only, and Drive read-only access; soldier validation,
-creation, and signing context; inventory form rules and inventory-to-signing
-context; signing draft editing, confirmation, signature, save, and failure
+  creation, signing context, and numbered/quantity transfers through signature
+  and a WhatsApp-ready receipt, including an in-platoon transfer by a
+  platoon-limited user; inventory form rules and inventory-to-signing
+  context; signing draft editing, confirmation, signature, save, and failure
 behavior; lazy signature history; and permission-form scope controls. Vitest
 repository tests remain responsible for exact Google Sheets/App Script requests
 and server-side mutation enforcement.
@@ -150,4 +152,3 @@ is audited in `תנועות`, and displays a persistent warning to every user un
 admin explicitly restores protected writes.
 
 <img width="1086" height="1448" alt="image" src="https://github.com/user-attachments/assets/4618cbfd-85a1-43ed-8cfc-8eedc1f09e10" />
-

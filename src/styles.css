@@ -721,6 +721,22 @@ textarea::placeholder {
   gap: 8px;
   margin-top: 14px;
 }
+.action-context {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid #b8d5dc;
+  border-radius: 12px;
+  background: #edf7f8;
+  color: #31545d;
+}
+.action-context strong {
+  color: #174b56;
+}
+.action-context small {
+  color: #627d86;
+}
 .range-presets {
   display: flex;
   flex-wrap: wrap;

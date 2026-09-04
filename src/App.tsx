@@ -870,7 +870,7 @@ export function App({ services = productionServices }: { services?: AppServices 
       )}
       {action && (
         <ActionModal
-          data={data}
+          data={visibleData}
           action={action}
           saving={saving}
           onClose={() => setAction(null)}
@@ -882,6 +882,25 @@ export function App({ services = productionServices }: { services?: AppServices 
                 const soldier = visibleData.soldiers.find(
                   (candidate) => candidate.personalNumber === values.soldier,
                 );
+                if (soldier && action.item.assignedTo) {
+                  const from = data.soldiers.find(
+                    (candidate) =>
+                      candidate.personalNumber === action.item.assignedTo,
+                  );
+                  if (from) {
+                    setAction(null);
+                    openSignings(
+                      {
+                        kind: "numberedTransfer",
+                        item: action.item,
+                        from,
+                        note: values.note,
+                      },
+                      soldier,
+                    );
+                    return;
+                  }
+                }
                 if (soldier)
                   ok = await mutate(
                     (current, repository) =>
@@ -936,6 +955,20 @@ export function App({ services = productionServices }: { services?: AppServices 
               const target = visibleData.soldiers.find(
                 (candidate) => candidate.personalNumber === values.target,
               );
+              if (action.mode === "transfer" && soldier && target) {
+                setAction(null);
+                openSignings(
+                  {
+                    kind: "quantityTransfer",
+                    item: action.item,
+                    from: soldier,
+                    quantity: Number(values.quantity),
+                    note: values.note,
+                  },
+                  target,
+                );
+                return;
+              }
               if (action.mode === "issue" && soldier)
                 ok = await mutate(
                   (current, repository) =>
@@ -962,21 +995,6 @@ export function App({ services = productionServices }: { services?: AppServices 
                     ),
                   "הציוד הוחזר",
                 );
-              if (action.mode === "transfer" && soldier && target)
-                ok = await mutate(
-                  (current, repository) =>
-                    repository.transferQuantity(
-                      current,
-                      action.item,
-                      soldier,
-                      target,
-                      Number(values.quantity),
-                      values.note,
-                    ),
-                  "הציוד הועבר",
-                );
-              if (ok && action.mode === "transfer" && target)
-                shareRecipient = target;
             }
             if (ok) {
               setAction(null);
@@ -993,12 +1011,20 @@ export function App({ services = productionServices }: { services?: AppServices 
           soldier={soldierDetail}
           editable={data.meta.editable}
           onClose={() => setSoldierDetail(null)}
-          onNumbered={(item, mode) =>
-            setAction({ kind: "numbered", item, mode })
-          }
-          onQuantity={(item, mode) =>
-            setAction({ kind: "quantity", item, soldier: soldierDetail, mode })
-          }
+          onNumbered={(item, mode) => {
+            setSoldierDetail(null);
+            setAction({ kind: "numbered", item, mode });
+          }}
+          onQuantity={(item, mode) => {
+            const sourceSoldier = soldierDetail;
+            setSoldierDetail(null);
+            setAction({
+              kind: "quantity",
+              item,
+              soldier: sourceSoldier,
+              mode,
+            });
+          }}
           onShare={() => setMovementShareSoldier(soldierDetail)}
           onOpenSigning={() => {
             const selected = soldierDetail;

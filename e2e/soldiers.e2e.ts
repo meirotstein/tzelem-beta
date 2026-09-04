@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { openApp } from "./testHelpers";
+import { drawValidSignature, openApp, selectMatchingOption } from "./testHelpers";
 
 async function openNewSoldierForm(page: Page) {
   await page.getByRole("button", { name: "חיילים" }).click();
@@ -49,6 +49,70 @@ test("opens signings with the selected soldier from soldier details", async ({ p
 
   await expect(page.getByRole("heading", { name: "החתמה — דוד כהן" })).toBeVisible();
   await expect(page.getByText("1111111", { exact: true })).toBeVisible();
+});
+
+test("quantity transfer continues through signature and WhatsApp receipt", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: "חיילים" }).click();
+  await page.getByText("דוד כהן", { exact: true }).click();
+  const soldierDialog = page.getByRole("dialog", { name: "דוד כהן" });
+  const itemCard = soldierDialog
+    .locator("article.list-card")
+    .filter({ hasText: "חולצה" });
+  await itemCard.getByRole("button", { name: "העברה" }).click();
+
+  await expect(soldierDialog).toHaveCount(0);
+  const transferDialog = page.getByRole("dialog", { name: "העברת ציוד" });
+  await expect(transferDialog).toBeVisible();
+  await expect(transferDialog).toContainText("חולצה · מידה מ");
+  await expect(transferDialog).toContainText("העברה מ־דוד כהן");
+  await expect(transferDialog).toContainText("1111111");
+  await expect(transferDialog).toContainText("כמות נוכחית: 2 יח׳");
+  await selectMatchingOption(transferDialog.getByLabel("העברה אל"), "מאיר לוי");
+  await transferDialog.getByRole("button", { name: "אישור" }).click();
+
+  await expect(page.getByRole("heading", { name: "החתמה — מאיר לוי" })).toBeVisible();
+  const shirtCard = page.locator("article.list-card").filter({ hasText: "חולצה" });
+  await expect(shirtCard).toContainText("טרם נשמר");
+  await expect(shirtCard).toContainText("כמות לפני השינוי: 0");
+  await page.getByRole("button", { name: "שמירת ההחתמה" }).click();
+  await drawValidSignature(page);
+  await page.getByRole("button", { name: "אישור ושמירת ההחתמה" }).click();
+  const receipt = page.getByRole("dialog", { name: "ההחתמה נשמרה" });
+  await expect(receipt).toContainText("העברה");
+  await expect(receipt).toContainText("חולצה");
+  await expect(receipt.getByRole("button", { name: "פתיחה ב-WhatsApp" })).toBeVisible();
+});
+
+test("numbered transfer continues through signature and WhatsApp receipt", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: "חיילים" }).click();
+  await page.getByText("מאיר לוי", { exact: true }).click();
+  const soldierDialog = page.getByRole("dialog", { name: "מאיר לוי" });
+  const itemCard = soldierDialog
+    .locator("article.list-card")
+    .filter({ hasText: "צ-200" });
+  await itemCard.getByRole("button", { name: "העברה" }).click();
+
+  await expect(soldierDialog).toHaveCount(0);
+  const transferDialog = page.getByRole("dialog", { name: "העברת ציוד" });
+  await expect(transferDialog).toBeVisible();
+  await expect(transferDialog).toContainText("אפוד · קרמי · מספר צ צ-200");
+  await expect(transferDialog).toContainText("העברה מ־מאיר לוי");
+  await expect(transferDialog).toContainText("2222222");
+  await selectMatchingOption(transferDialog.getByLabel("העברה אל"), "דוד כהן");
+  await transferDialog.getByRole("button", { name: "אישור" }).click();
+
+  await expect(page.getByRole("heading", { name: "החתמה — דוד כהן" })).toBeVisible();
+  const vestCard = page.locator("article.list-card").filter({ hasText: "צ-200" });
+  await expect(vestCard).toContainText("טרם נשמר");
+  await page.getByRole("button", { name: "שמירת ההחתמה" }).click();
+  await drawValidSignature(page);
+  await page.getByRole("button", { name: "אישור ושמירת ההחתמה" }).click();
+  const receipt = page.getByRole("dialog", { name: "ההחתמה נשמרה" });
+  await expect(receipt).toContainText("העברה");
+  await expect(receipt).toContainText("צ-200");
+  await expect(receipt.getByRole("button", { name: "פתיחה ב-WhatsApp" })).toBeVisible();
 });
 
 test("shows a repository failure as a toast and keeps the soldier form open", async ({ page }) => {

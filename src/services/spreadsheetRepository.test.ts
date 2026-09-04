@@ -87,7 +87,9 @@ describe("saveSigningSession", () => {
     await repository.saveSigningSession(data, soldier, {
       numberedToAssign: [data.numberedItems[0]],
       numberedToReturn: [],
+      numberedTransfers: [],
       quantityTargets: [],
+      quantityTransfers: [],
       signature,
     });
 
@@ -122,11 +124,106 @@ describe("saveSigningSession", () => {
       repository.saveSigningSession(data, soldier, {
         numberedToAssign: [data.numberedItems[0]],
         numberedToReturn: [],
+        numberedTransfers: [],
         quantityTargets: [],
+        quantityTransfers: [],
         signature: { version: 1, strokes: [] },
       }),
     ).rejects.toThrow("חתימה תקינה");
     expect(batchUpdate).not.toHaveBeenCalled();
+  });
+
+  it("saves a numbered transfer with its signature in one batch", async () => {
+    const from = { ...soldier, personalNumber: "7654321", name: "חייל מקור" };
+    const assignedItem = {
+      ...data.numberedItems[0],
+      status: "משויך" as const,
+      assignedTo: from.personalNumber,
+    };
+    const transferData = {
+      ...data,
+      soldiers: [soldier, from],
+      numberedItems: [assignedItem],
+      permissions: [
+        {
+          row: 2,
+          email: "admin@example.com",
+          admin: false,
+          equipmentScope: "הכל" as const,
+          platoons: ["1"],
+        },
+      ],
+    };
+    const repository = new SpreadsheetRepository("sheet");
+
+    const movements = await repository.saveSigningSession(transferData, soldier, {
+      numberedToAssign: [],
+      numberedToReturn: [],
+      numberedTransfers: [{ item: assignedItem, from, note: "" }],
+      quantityTargets: [],
+      quantityTransfers: [],
+      signature,
+    });
+
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+    expect(batchUpdate.mock.calls[0][0].resource.requests).toHaveLength(3);
+    expect(movements[0]).toMatchObject({
+      action: "העברה",
+      previousSoldier: from.personalNumber,
+      newSoldier: soldier.personalNumber,
+    });
+  });
+
+  it("moves quantity between soldiers with its signature in one batch", async () => {
+    const from = { ...soldier, personalNumber: "7654321", name: "חייל מקור" };
+    const item = {
+      row: 2,
+      type: "חולצה",
+      variant: "מ",
+      variantLabel: "מידה",
+      method: "כמותי" as const,
+      totalStock: 10,
+      location: "",
+      standard: 0,
+      note: "",
+      active: true,
+    };
+    const transferData = {
+      ...data,
+      soldiers: [soldier, from],
+      catalog: [item],
+      holdings: [
+        { row: 2, personalNumber: from.personalNumber, type: item.type, variant: item.variant, quantity: 3 },
+      ],
+      permissions: [
+        {
+          row: 2,
+          email: "admin@example.com",
+          admin: false,
+          equipmentScope: "הכל" as const,
+          platoons: ["1"],
+        },
+      ],
+    };
+    const repository = new SpreadsheetRepository("sheet");
+
+    const movements = await repository.saveSigningSession(transferData, soldier, {
+      numberedToAssign: [],
+      numberedToReturn: [],
+      numberedTransfers: [],
+      quantityTargets: [],
+      quantityTransfers: [{ item, from, quantity: 2, note: "" }],
+      signature,
+    });
+
+    expect(batchUpdate).toHaveBeenCalledTimes(1);
+    expect(batchUpdate.mock.calls[0][0].resource.requests).toHaveLength(4);
+    expect(movements[0]).toMatchObject({
+      action: "העברה",
+      quantity: 2,
+      previousSoldier: from.personalNumber,
+      newSoldier: soldier.personalNumber,
+    });
   });
 });
 

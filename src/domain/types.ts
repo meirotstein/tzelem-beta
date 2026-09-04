@@ -262,6 +262,17 @@ export interface MovementDraft {
 export interface SigningSessionInput {
   numberedToAssign: NumberedItem[];
   numberedToReturn: NumberedItem[];
+  numberedTransfers: Array<{
+    item: NumberedItem;
+    from: Soldier;
+    note: string;
+  }>;
   quantityTargets: Array<{ item: CatalogItem; quantity: number }>;
+  quantityTransfers: Array<{
+    item: CatalogItem;
+    from: Soldier;
+    quantity: number;
+    note: string;
+  }>;
   signature: SignatureData;
 }

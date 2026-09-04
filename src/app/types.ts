@@ -20,7 +20,20 @@ export type Action =
   | null;
 export type SigningSeed =
   | { kind: "numbered"; item: NumberedItem }
-  | { kind: "quantity"; item: CatalogItem };
+  | { kind: "quantity"; item: CatalogItem }
+  | {
+      kind: "numberedTransfer";
+      item: NumberedItem;
+      from: Soldier;
+      note: string;
+    }
+  | {
+      kind: "quantityTransfer";
+      item: CatalogItem;
+      from: Soldier;
+      quantity: number;
+      note: string;
+    };
 export type SignatureViewerState = {
   key: string;
   summary: SignatureSummary;
@@ -35,4 +48,3 @@ export type ConfirmationRequest = {
   danger?: boolean;
   onConfirm: () => void;
 };
-

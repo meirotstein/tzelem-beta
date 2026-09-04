@@ -331,8 +331,8 @@ Filtering is combinable. Clear filters must be easy to discover on mobile.
 
 ### Current automated E2E characterization coverage
 
-The Playwright suite contains 21 behavioral scenarios. Every scenario runs in
-desktop Chromium and a Pixel 7 mobile viewport, for 42 browser checks:
+The Playwright suite contains 24 behavioral scenarios. Every scenario runs in
+desktop Chromium and a Pixel 7 mobile viewport, for 48 browser checks:
 
 - Navigation: an admin can open Dashboard, Signings, Soldiers, Inventory,
   History, and Settings and each destination renders its expected page.
@@ -346,7 +346,13 @@ desktop Chromium and a Pixel 7 mobile viewport, for 42 browser checks:
   in-memory soldier creation followed by silent page refresh and success toast;
   opening Signings from soldier details with that soldier preserved; and a
   simulated repository failure shown as an error toast while the form remains
-  open and unsaved.
+  open and unsaved. Quantity and numbered transfer actions opened from soldier
+  details close the soldier dialog, identify the equipment and source, seed the
+  destination soldier's signing draft, require a drawn signature, save the
+  transfer, and show the WhatsApp-ready signing receipt; quantity transfer also
+  displays the currently held and original destination quantities. A
+  platoon-limited user can complete a signed transfer between soldiers in the
+  permitted platoon, while an out-of-scope soldier is unavailable as a target.
 - Inventory: a new equipment type defaults to `כמותי`; the new numbered-item
   form lists only `צל״מ` catalog entries; starting a signing from an inventory
   item carries that item through soldier selection into the draft; and removal
