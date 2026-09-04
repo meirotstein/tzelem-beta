@@ -132,3 +132,6 @@ activates automatically after an Apps Script failure. Its toggle is deliberately
 written directly to Sheets so it remains available during a coordinator outage,
 is audited in `תנועות`, and displays a persistent warning to every user until an
 admin explicitly restores protected writes.
+
+<img width="1086" height="1448" alt="image" src="https://github.com/user-attachments/assets/4618cbfd-85a1-43ed-8cfc-8eedc1f09e10" />
+
